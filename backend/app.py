@@ -179,8 +179,9 @@ HTML_TEMPLATE = """
       align-items: center;
       justify-content: flex-start;
       color: white;
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
+      padding-top: max(1rem, env(safe-area-inset-top));
+      padding-bottom: max(1rem, env(safe-area-inset-bottom));
+      position: relative;
     }
 
     .container {
@@ -222,13 +223,16 @@ HTML_TEMPLATE = """
 
     input {
       flex: 1;
-      padding: 12px 16px;
+      padding: 14px 16px;
       font-size: 16px;
       border: none;
       border-radius: 25px;
       background: rgba(255,255,255,0.9);
       outline: none;
       color: #333;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
     }
 
     input::placeholder {
@@ -236,7 +240,7 @@ HTML_TEMPLATE = """
     }
 
     button {
-      padding: 12px 16px;
+      padding: 14px 16px;
       font-size: 16px;
       border: none;
       border-radius: 25px;
@@ -249,6 +253,13 @@ HTML_TEMPLATE = """
       display: flex;
       align-items: center;
       justify-content: center;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      appearance: none;
+      user-select: none;
+      -webkit-user-select: none;
+      -moz-user-select: none;
+      touch-action: manipulation;
     }
 
     button:hover {
@@ -258,19 +269,26 @@ HTML_TEMPLATE = """
 
     button:active {
       transform: translateY(0);
+      background: #004085;
     }
 
     .voice-btn {
       background: #28a745;
       border-radius: 50%;
-      width: 50px;
-      height: 50px;
+      width: 52px;
+      height: 52px;
       padding: 0;
-      font-size: 18px;
+      font-size: 20px;
+      position: relative;
+      overflow: hidden;
     }
 
     .voice-btn:hover {
       background: #1e7e34;
+    }
+
+    .voice-btn:active {
+      background: #155724;
     }
 
     .voice-btn.listening {
@@ -278,18 +296,29 @@ HTML_TEMPLATE = """
       animation: pulse 1s infinite;
     }
 
+    .voice-btn.listening:hover {
+      background: #c82333;
+    }
+
+    .voice-btn.disabled {
+      background: #6c757d;
+      cursor: not-allowed;
+      opacity: 0.6;
+    }
+
     @keyframes pulse {
       0% { transform: scale(1); }
-      50% { transform: scale(1.1); }
+      50% { transform: scale(1.05); }
       100% { transform: scale(1); }
     }
 
     .voice-status {
       margin-top: 0.5rem;
       font-size: 0.85rem;
-      color: rgba(255,255,255,0.8);
+      color: rgba(255,255,255,0.9);
       text-align: center;
       min-height: 20px;
+      font-weight: 500;
     }
 
     .response-container {
@@ -300,6 +329,8 @@ HTML_TEMPLATE = """
       border: 1px solid rgba(255,255,255,0.2);
       min-height: 200px;
       flex: 1;
+      overflow-y: auto;
+      max-height: 60vh;
     }
 
     .response-text {
@@ -309,6 +340,28 @@ HTML_TEMPLATE = """
       word-wrap: break-word;
       color: rgba(255,255,255,0.9);
       font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+    }
+
+    .permissions-prompt {
+      background: rgba(255,193,7,0.9);
+      color: #333;
+      padding: 12px;
+      border-radius: 12px;
+      margin-bottom: 1rem;
+      text-align: center;
+      font-size: 0.9rem;
+      display: none;
+    }
+
+    .permissions-prompt button {
+      background: #007bff;
+      color: white;
+      border: none;
+      padding: 8px 16px;
+      border-radius: 8px;
+      margin-top: 8px;
+      cursor: pointer;
+      font-size: 14px;
     }
 
     .install-prompt {
@@ -337,6 +390,7 @@ HTML_TEMPLATE = """
       cursor: pointer;
     }
 
+    /* Mobile specific improvements */
     @media (max-width: 480px) {
       .container {
         max-width: 100%;
@@ -349,6 +403,60 @@ HTML_TEMPLATE = """
       h1 {
         font-size: 1.5rem;
       }
+      
+      .input-group {
+        gap: 0.75rem;
+      }
+      
+      input {
+        padding: 16px;
+        font-size: 16px; /* Prevents zoom on iOS */
+      }
+      
+      button {
+        padding: 16px;
+        min-height: 48px; /* Better touch target */
+      }
+      
+      .voice-btn {
+        width: 56px;
+        height: 56px;
+        font-size: 22px;
+      }
+    }
+
+    /* Landscape mode adjustments */
+    @media (orientation: landscape) and (max-height: 600px) {
+      body {
+        padding: 0.5rem;
+      }
+      
+      h1 {
+        font-size: 1.3rem;
+      }
+      
+      .subtitle {
+        font-size: 0.8rem;
+        margin-bottom: 0.5rem;
+      }
+      
+      .response-container {
+        max-height: 40vh;
+      }
+    }
+
+    /* High DPI displays */
+    @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
+      .voice-btn {
+        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+      }
+    }
+
+    /* Dark mode support */
+    @media (prefers-color-scheme: dark) {
+      input {
+        background: rgba(255,255,255,0.95);
+      }
     }
   </style>
 </head>
@@ -357,10 +465,15 @@ HTML_TEMPLATE = """
     <h1>🤖 Smart AI Agent</h1>
     <div class="subtitle">AI-powered task and appointment manager</div>
     
+    <div class="permissions-prompt" id="permissionsPrompt">
+      <div>🎤 Microphone access needed for voice commands</div>
+      <button onclick="requestMicrophonePermission()">Enable Microphone</button>
+    </div>
+    
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Type or speak your command..." />
-        <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🎤</button>
+        <input type="text" id="command" placeholder="Type or speak your command..." autocomplete="off" autocorrect="off" spellcheck="false" />
+        <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice input">🎤</button>
         <button onclick="sendCommand()">Send</button>
       </div>
       <div class="voice-status" id="voiceStatus"></div>
@@ -382,67 +495,181 @@ HTML_TEMPLATE = """
     let recognition;
     let isListening = false;
     let speechSynthesis = window.speechSynthesis;
+    let microphonePermission = false;
+    let recognitionTimeout;
+    let silenceTimeout;
 
-    // Initialize speech recognition
+    // Mobile-specific speech recognition setup
     function initSpeechRecognition() {
-      if ('webkitSpeechRecognition' in window) {
-        recognition = new webkitSpeechRecognition();
-      } else if ('SpeechRecognition' in window) {
-        recognition = new SpeechRecognition();
-      } else {
+      // Check for speech recognition support
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      
+      if (!SpeechRecognition) {
         console.log('Speech recognition not supported');
-        document.getElementById('voiceBtn').style.display = 'none';
-        return;
+        document.getElementById('voiceBtn').classList.add('disabled');
+        document.getElementById('voiceStatus').textContent = '❌ Voice not supported';
+        return false;
       }
 
+      recognition = new SpeechRecognition();
+      
+      // Mobile-optimized settings
       recognition.continuous = false;
-      recognition.interimResults = false;
-      recognition.lang = 'en-US';
-
+      recognition.interimResults = true;
+      recognition.lang = navigator.language || 'en-US';
+      recognition.maxAlternatives = 1;
+      
       recognition.onstart = function() {
         isListening = true;
         document.getElementById('voiceBtn').classList.add('listening');
-        document.getElementById('voiceStatus').textContent = '🔴 Listening... Speak now';
+        document.getElementById('voiceStatus').textContent = '🔴 Listening... Speak clearly';
+        
+        // Set timeout for recognition
+        recognitionTimeout = setTimeout(() => {
+          if (isListening) {
+            recognition.stop();
+            document.getElementById('voiceStatus').textContent = '⏰ Listening timeout';
+          }
+        }, 10000); // 10 second timeout
       };
 
       recognition.onresult = function(event) {
-        const transcript = event.results[0][0].transcript;
-        document.getElementById('command').value = transcript;
-        document.getElementById('voiceStatus').textContent = `✅ Heard: "${transcript}"`;
+        clearTimeout(recognitionTimeout);
+        clearTimeout(silenceTimeout);
         
-        // Auto-send after voice input
-        setTimeout(() => {
-          sendCommand();
-        }, 1000);
+        let transcript = '';
+        let isFinal = false;
+        
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          if (event.results[i].isFinal) {
+            transcript += event.results[i][0].transcript;
+            isFinal = true;
+          } else {
+            transcript += event.results[i][0].transcript;
+          }
+        }
+        
+        if (transcript.trim()) {
+          document.getElementById('command').value = transcript;
+          
+          if (isFinal) {
+            document.getElementById('voiceStatus').textContent = `✅ Heard: "${transcript.trim()}"`;
+            
+            // Auto-send after brief delay
+            setTimeout(() => {
+              sendCommand();
+            }, 1500);
+          } else {
+            document.getElementById('voiceStatus').textContent = `🎤 "${transcript.trim()}"`;
+            
+            // Set silence timeout
+            silenceTimeout = setTimeout(() => {
+              if (isListening) {
+                recognition.stop();
+              }
+            }, 3000);
+          }
+        }
       };
 
       recognition.onerror = function(event) {
+        clearTimeout(recognitionTimeout);
+        clearTimeout(silenceTimeout);
+        
         console.error('Speech recognition error:', event.error);
-        document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
+        
+        let errorMsg = '';
+        switch(event.error) {
+          case 'no-speech':
+            errorMsg = '🔇 No speech detected. Try again.';
+            break;
+          case 'audio-capture':
+            errorMsg = '🎤 Microphone error. Check permissions.';
+            break;
+          case 'not-allowed':
+            errorMsg = '🚫 Microphone access denied';
+            showPermissionsPrompt();
+            break;
+          case 'network':
+            errorMsg = '📶 Network error. Check connection.';
+            break;
+          case 'service-not-allowed':
+            errorMsg = '🔒 Voice service not available';
+            break;
+          default:
+            errorMsg = `❌ Error: ${event.error}`;
+        }
+        
+        document.getElementById('voiceStatus').textContent = errorMsg;
         stopListening();
       };
 
       recognition.onend = function() {
+        clearTimeout(recognitionTimeout);
+        clearTimeout(silenceTimeout);
         stopListening();
       };
+
+      return true;
+    }
+
+    function requestMicrophonePermission() {
+      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+        navigator.mediaDevices.getUserMedia({ audio: true })
+          .then(function(stream) {
+            microphonePermission = true;
+            document.getElementById('permissionsPrompt').style.display = 'none';
+            document.getElementById('voiceStatus').textContent = '🎤 Microphone ready';
+            
+            // Stop the stream as we only needed permission
+            stream.getTracks().forEach(track => track.stop());
+          })
+          .catch(function(err) {
+            console.error('Microphone permission denied:', err);
+            document.getElementById('voiceStatus').textContent = '🚫 Microphone access denied';
+          });
+      }
+    }
+
+    function showPermissionsPrompt() {
+      document.getElementById('permissionsPrompt').style.display = 'block';
     }
 
     function toggleVoice() {
       if (!recognition) {
-        alert('Speech recognition is not supported in this browser');
+        document.getElementById('voiceStatus').textContent = '❌ Voice not supported in this browser';
+        return;
+      }
+
+      if (document.getElementById('voiceBtn').classList.contains('disabled')) {
         return;
       }
 
       if (isListening) {
         recognition.stop();
+        document.getElementById('voiceStatus').textContent = '⏹️ Stopping...';
       } else {
-        recognition.start();
+        // Check microphone permission first
+        if (!microphonePermission) {
+          requestMicrophonePermission();
+          return;
+        }
+        
+        try {
+          recognition.start();
+        } catch (e) {
+          console.error('Failed to start recognition:', e);
+          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice recognition';
+        }
       }
     }
 
     function stopListening() {
       isListening = false;
+      clearTimeout(recognitionTimeout);
+      clearTimeout(silenceTimeout);
       document.getElementById('voiceBtn').classList.remove('listening');
+      
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
       }
@@ -455,14 +682,25 @@ HTML_TEMPLATE = """
       speechSynthesis.cancel();
       
       // Clean up the text for speech
-      const cleanText = text.replace(/[📋✅❌🤔⚠️🔴]/g, '').replace(/\n/g, ' ');
+      const cleanText = text.replace(/[📋✅❌🤔⚠️🔴🎤🔇📶🚫🔒⏰⏹️]/g, '').replace(/\n/g, ' ');
       
-      const utterance = new SpeechSynthesisUtterance(cleanText);
-      utterance.rate = 0.9;
-      utterance.pitch = 1;
-      utterance.volume = 0.8;
-      
-      speechSynthesis.speak(utterance);
+      if (cleanText.trim()) {
+        const utterance = new SpeechSynthesisUtterance(cleanText);
+        utterance.rate = 0.9;
+        utterance.pitch = 1;
+        utterance.volume = 0.8;
+        
+        // Use a more natural voice if available
+        const voices = speechSynthesis.getVoices();
+        const preferredVoice = voices.find(voice => 
+          voice.lang.startsWith('en') && voice.localService
+        );
+        if (preferredVoice) {
+          utterance.voice = preferredVoice;
+        }
+        
+        speechSynthesis.speak(utterance);
+      }
     }
 
     // PWA Install prompt
@@ -495,7 +733,25 @@ HTML_TEMPLATE = """
     }
 
     // Initialize speech recognition when page loads
-    window.addEventListener('load', initSpeechRecognition);
+    window.addEventListener('load', function() {
+      if (initSpeechRecognition()) {
+        // Check for microphone permission on load
+        if (navigator.permissions) {
+          navigator.permissions.query({ name: 'microphone' }).then(function(result) {
+            if (result.state === 'granted') {
+              microphonePermission = true;
+              document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
+            } else if (result.state === 'prompt') {
+              document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to enable voice';
+            } else {
+              showPermissionsPrompt();
+            }
+          });
+        } else {
+          document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
+        }
+      }
+    });
 
     function sendCommand() {
       const input = document.getElementById('command');
@@ -533,57 +789,4 @@ HTML_TEMPLATE = """
     }
 
     // Allow Enter key to submit
-    document.getElementById('command').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
-        sendCommand();
-      }
-    });
-
-    // Handle keyboard on mobile
-    document.getElementById('command').addEventListener('focus', function() {
-      setTimeout(() => {
-        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 300);
-    });
-
-    // Voice commands shortcuts
-    document.addEventListener('keydown', function(e) {
-      // Press Space to activate voice (when not typing)
-      if (e.code === 'Space' && document.activeElement !== document.getElementById('command')) {
-        e.preventDefault();
-        toggleVoice();
-      }
-    });
-  </script>
-</body>
-</html>
-"""
-
-# ----- Routes -----
-
-@app.route("/")
-def root():
-    return HTML_TEMPLATE
-
-@app.route('/execute', methods=['POST'])
-def execute():
-    try:
-        data = request.json
-        prompt = data.get("text", "")
-        result = call_claude(prompt)
-
-        if "error" in result:
-            return jsonify({"response": result["error"]}), 500
-
-        dispatch_result = dispatch_action(result)
-        return jsonify({
-            "response": dispatch_result,
-            "claude_output": result
-        })
-
-    except Exception as e:
-        return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    document.getElementById('command').addEventListener('keypress', function(

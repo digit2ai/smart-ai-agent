@@ -1,37 +1,40 @@
-# Flask app for Smart Agent (Claude + OpenAI)
+# Flask CMP Server with Claude structured output and action routing
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
+from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
 
 CONFIG = {
     "provider": "claude",
-    "openai_api_key": os.getenv("OPENAI_API_KEY", ""),
     "claude_api_key": os.getenv("CLAUDE_API_KEY", "")
 }
 
 INSTRUCTION_PROMPT = """
-You are an intelligent assistant that extracts structured actions from user input.
-Only return valid JSON. Do not include any extra commentary.
+You are an intelligent assistant. Respond ONLY with valid JSON using one of the supported actions.
 
-Supported action: "create_task"
+Supported actions:
+- create_task
+- create_appointment
+- send_message
+- log_conversation
 
-Your response format must match:
+Each response must use this structure:
 {
-  "action": "create_task",
-  "title": "...",
-  "due_date": "YYYY-MM-DDTHH:MM:SS"
+  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation",
+  "title": "...",               // for tasks or appointments
+  "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
+  "recipient": "Name or contact",    // for send_message
+  "message": "Body of the message",  // for send_message or log
+  "notes": "Optional details or transcript" // for CRM logs
 }
-
-If the date/time is vague, set due_date to null.
+Only include fields relevant to the action.
+Do not add extra commentary.
 """
-
-def call_openai(prompt):
-    return {"response": "OpenAI not yet wired in this version."}
 
 def call_claude(prompt):
     try:
@@ -40,8 +43,8 @@ def call_claude(prompt):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json"
         }
-
         full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
+
         body = {
             "model": "claude-3-haiku-20240307",
             "max_tokens": 1000,
@@ -53,27 +56,64 @@ def call_claude(prompt):
         response_json = res.json()
         if "content" in response_json:
             raw_text = response_json["content"][0]["text"]
-            parsed_json = json.loads(raw_text)
-            return parsed_json
+            parsed = json.loads(raw_text)
+            return parsed
         else:
-            print("Claude API error:", json.dumps(response_json, indent=2))
-            return {"error": response_json.get("error", "Unknown error")}
+            return {"error": "Claude response missing content."}
     except Exception as e:
-        print("Exception in call_claude:", str(e))
-        return {"error": f"Server error: {str(e)}"}
+        return {"error": str(e)}
+
+# ----- CMP Action Handlers -----
+
+def handle_create_task(data):
+    print("[CMP] Creating task:", data.get("title"), data.get("due_date"))
+    return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}."
+
+def handle_create_appointment(data):
+    print("[CMP] Creating appointment:", data.get("title"), data.get("due_date"))
+    return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
+
+def handle_send_message(data):
+    print("[CMP] Sending message to", data.get("recipient"))
+    print("Message:", data.get("message"))
+    return f"Message sent to {data.get('recipient')}."
+
+def handle_log_conversation(data):
+    print("[CMP] Logging conversation:", data.get("notes"))
+    return "Conversation log saved."
+
+def dispatch_action(parsed):
+    action = parsed.get("action")
+    if action == "create_task":
+        return handle_create_task(parsed)
+    elif action == "create_appointment":
+        return handle_create_appointment(parsed)
+    elif action == "send_message":
+        return handle_send_message(parsed)
+    elif action == "log_conversation":
+        return handle_log_conversation(parsed)
+    else:
+        return f"Unknown action: {action}"
+
+# ----- API Route -----
 
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
-        if CONFIG["provider"] == "claude":
-            result = call_claude(prompt)
-        else:
-            result = call_openai(prompt)
-        return jsonify({"response": result})
+        result = call_claude(prompt)
+
+        if "error" in result:
+            return jsonify({"response": result["error"]}), 500
+
+        dispatch_result = dispatch_action(result)
+        return jsonify({
+            "response": dispatch_result,
+            "claude_output": result
+        })
+
     except Exception as e:
-        print("Top-level error:", str(e))
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
 if __name__ == '__main__':

@@ -1,4 +1,4 @@
-# Flask CMP Server with Claude structured output and embedded HTML frontend
+# Flask CMP Server with PWA capabilities for mobile app experience
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -95,112 +95,283 @@ def dispatch_action(parsed):
     else:
         return f"Unknown action: {action}"
 
-# ----- Embedded HTML Template -----
+# ----- PWA Manifest -----
+@app.route('/manifest.json')
+def manifest():
+    return jsonify({
+        "name": "Smart AI Agent",
+        "short_name": "AI Agent",
+        "description": "AI-powered task and appointment manager",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#f4f6f8",
+        "theme_color": "#007bff",
+        "icons": [
+            {
+                "src": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+",
+                "sizes": "192x192",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            }
+        ],
+        "categories": ["productivity", "utilities"],
+        "orientation": "portrait"
+    })
+
+# ----- Service Worker -----
+@app.route('/sw.js')
+def service_worker():
+    return '''
+const CACHE_NAME = 'ai-agent-v1';
+const urlsToCache = [
+  '/',
+  '/manifest.json'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => {
+        if (response) {
+          return response;
+        }
+        return fetch(event.request);
+      })
+  );
+});
+''', {'Content-Type': 'application/javascript'}
+
+# ----- Mobile-Optimized HTML Template -----
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Smart AI Agent</title>
+  <link rel="manifest" href="/manifest.json">
+  <meta name="theme-color" content="#007bff">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="AI Agent">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <style>
+    * {
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
     body {
-      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-      background-color: #f4f6f8;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       margin: 0;
-      padding: 2rem;
+      padding: 1rem;
+      min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: flex-start;
+      color: white;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    .container {
+      width: 100%;
+      max-width: 400px;
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
     }
 
     h1 {
-      font-size: 2rem;
-      margin-bottom: 0.3rem;
+      font-size: 1.8rem;
+      margin: 0;
+      text-align: center;
+      font-weight: 600;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
     }
 
-    h2 {
-      font-size: 0.95rem;
-      font-weight: normal;
-      color: #777;
-      margin-bottom: 2rem;
+    .subtitle {
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.8);
+      text-align: center;
+      margin-bottom: 1rem;
+    }
+
+    .input-container {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 1rem;
+      border: 1px solid rgba(255,255,255,0.2);
     }
 
     .input-group {
       display: flex;
-      width: 100%;
-      max-width: 720px;
-      gap: 8px;
+      gap: 0.5rem;
+      align-items: center;
     }
 
     input {
       flex: 1;
-      padding: 14px;
+      padding: 12px 16px;
       font-size: 16px;
-      border: 1px solid #ccc;
-      border-radius: 8px;
+      border: none;
+      border-radius: 25px;
+      background: rgba(255,255,255,0.9);
+      outline: none;
+      color: #333;
+    }
+
+    input::placeholder {
+      color: #666;
     }
 
     button {
-      padding: 14px 20px;
+      padding: 12px 16px;
       font-size: 16px;
       border: none;
-      border-radius: 8px;
-      background-color: #007bff;
+      border-radius: 25px;
+      background: #007bff;
       color: white;
       cursor: pointer;
+      font-weight: 600;
+      min-width: 60px;
+      transition: all 0.2s;
     }
 
     button:hover {
-      background-color: #0056b3;
+      background: #0056b3;
+      transform: translateY(-1px);
     }
 
-    pre {
-      margin-top: 2rem;
-      width: 100%;
-      max-width: 720px;
-      background-color: #fff;
-      border: 1px solid #ccc;
-      border-radius: 8px;
-      padding: 1.5rem;
+    button:active {
+      transform: translateY(0);
+    }
+
+    .response-container {
+      background: rgba(255,255,255,0.1);
+      backdrop-filter: blur(10px);
+      border-radius: 16px;
+      padding: 1rem;
+      border: 1px solid rgba(255,255,255,0.2);
+      min-height: 200px;
+      flex: 1;
+    }
+
+    .response-text {
       font-size: 14px;
+      line-height: 1.5;
       white-space: pre-wrap;
-      min-height: 220px;
-      line-height: 1.6;
-      overflow-x: auto;
+      word-wrap: break-word;
+      color: rgba(255,255,255,0.9);
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     }
 
-    .label {
-      font-weight: bold;
-      margin-bottom: 0.5rem;
+    .install-prompt {
+      position: fixed;
+      bottom: 20px;
+      left: 20px;
+      right: 20px;
+      background: #007bff;
+      color: white;
+      padding: 12px 16px;
+      border-radius: 12px;
+      display: none;
+      align-items: center;
+      justify-content: space-between;
+      z-index: 1000;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
     }
 
-    @media (max-width: 768px) {
-      .input-group {
-        flex-direction: column;
-      }
+    .install-prompt button {
+      background: rgba(255,255,255,0.2);
+      border: none;
+      color: white;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 14px;
+      cursor: pointer;
+    }
 
-      button {
-        width: 100%;
+    @media (max-width: 480px) {
+      .container {
+        max-width: 100%;
       }
-
-      pre {
-        font-size: 13px;
+      
+      body {
+        padding: 0.5rem;
+      }
+      
+      h1 {
+        font-size: 1.5rem;
       }
     }
   </style>
 </head>
 <body>
-  <h1>Smart AI Agent UI</h1>
-  <h2>Tech Stack: Single Flask App → Claude (Anthropic) → CMP Logic</h2>
+  <div class="container">
+    <h1>🤖 Smart AI Agent</h1>
+    <div class="subtitle">AI-powered task and appointment manager</div>
+    
+    <div class="input-container">
+      <div class="input-group">
+        <input type="text" id="command" placeholder="What would you like me to do?" />
+        <button onclick="sendCommand()">Send</button>
+      </div>
+    </div>
 
-  <div class="input-group">
-    <input type="text" id="command" placeholder="What would you like the agent to do?" />
-    <button onclick="sendCommand()">Send</button>
+    <div class="response-container">
+      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation"</div>
+    </div>
   </div>
 
-  <pre id="response">Claude API response will appear here...</pre>
+  <div class="install-prompt" id="installPrompt">
+    <span>Install this app for the full experience!</span>
+    <button onclick="installApp()">Install</button>
+    <button onclick="hideInstallPrompt()">×</button>
+  </div>
 
   <script>
+    let deferredPrompt;
+
+    // PWA Install prompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installPrompt').style.display = 'flex';
+    });
+
+    function installApp() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          if (choiceResult.outcome === 'accepted') {
+            console.log('User accepted the install prompt');
+          }
+          deferredPrompt = null;
+          hideInstallPrompt();
+        });
+      }
+    }
+
+    function hideInstallPrompt() {
+      document.getElementById('installPrompt').style.display = 'none';
+    }
+
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
+
     function sendCommand() {
       const input = document.getElementById('command');
       const output = document.getElementById('response');
@@ -211,7 +382,7 @@ HTML_TEMPLATE = """
         return;
       }
 
-      output.textContent = "Sending...";
+      output.textContent = "🤔 Processing...";
 
       fetch("/execute", {
         method: "POST",
@@ -220,8 +391,8 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        output.textContent = "Claude API response:\\n" + JSON.stringify(data.claude_output || data.response, null, 2);
-        output.scrollIntoView({ behavior: "smooth" });
+        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
+        input.value = "";
       })
       .catch(err => {
         output.textContent = "❌ Error: " + err.message;
@@ -233,6 +404,13 @@ HTML_TEMPLATE = """
       if (e.key === 'Enter') {
         sendCommand();
       }
+    });
+
+    // Handle keyboard on mobile
+    document.getElementById('command').addEventListener('focus', function() {
+      setTimeout(() => {
+        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
     });
   </script>
 </body>

@@ -26,7 +26,7 @@ def call_claude(prompt):
         }
 
         body = {
-            "model": "claude-3-opus-20240229",
+            "model": "claude-3-haiku-20240307",
             "max_tokens": 1000,
             "temperature": 0.7,
             "messages": [{"role": "user", "content": prompt}]

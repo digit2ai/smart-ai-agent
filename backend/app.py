@@ -14,6 +14,22 @@ CONFIG = {
     "claude_api_key": os.getenv("CLAUDE_API_KEY", "")
 }
 
+INSTRUCTION_PROMPT = """
+You are an intelligent assistant that extracts structured actions from user input.
+Only return valid JSON. Do not include any extra commentary.
+
+Supported action: "create_task"
+
+Your response format must match:
+{
+  "action": "create_task",
+  "title": "...",
+  "due_date": "YYYY-MM-DDTHH:MM:SS"
+}
+
+If the date/time is vague, set due_date to null.
+"""
+
 def call_openai(prompt):
     return {"response": "OpenAI not yet wired in this version."}
 
@@ -25,23 +41,26 @@ def call_claude(prompt):
             "content-type": "application/json"
         }
 
+        full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
         body = {
             "model": "claude-3-haiku-20240307",
             "max_tokens": 1000,
-            "temperature": 0.7,
-            "messages": [{"role": "user", "content": prompt}]
+            "temperature": 0.3,
+            "messages": [{"role": "user", "content": full_prompt}]
         }
 
         res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
         response_json = res.json()
         if "content" in response_json:
-            return response_json["content"][0]["text"]
+            raw_text = response_json["content"][0]["text"]
+            parsed_json = json.loads(raw_text)
+            return parsed_json
         else:
             print("Claude API error:", json.dumps(response_json, indent=2))
-            return f"Claude API error: {response_json.get('error', 'Unknown error')}"
+            return {"error": response_json.get("error", "Unknown error")}
     except Exception as e:
         print("Exception in call_claude:", str(e))
-        return f"Server error: {str(e)}"
+        return {"error": f"Server error: {str(e)}"}
 
 @app.route('/execute', methods=['POST'])
 def execute():

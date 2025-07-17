@@ -1,5 +1,5 @@
-# Flask CMP Server with Claude structured output and action routing
-from flask import Flask, request, jsonify, send_from_directory
+# Flask CMP Server with Claude structured output and embedded HTML frontend
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
@@ -95,17 +95,156 @@ def dispatch_action(parsed):
     else:
         return f"Unknown action: {action}"
 
-# ----- Serve frontend files -----
-@app.route("/frontend/src/<path:filename>")
-def serve_static(filename):
-    return send_from_directory("frontend/src", filename)
+# ----- Embedded HTML Template -----
+HTML_TEMPLATE = """
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Smart AI Agent</title>
+  <style>
+    body {
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f6f8;
+      margin: 0;
+      padding: 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
 
-# ✅ Serve index.html at root
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.3rem;
+    }
+
+    h2 {
+      font-size: 0.95rem;
+      font-weight: normal;
+      color: #777;
+      margin-bottom: 2rem;
+    }
+
+    .input-group {
+      display: flex;
+      width: 100%;
+      max-width: 720px;
+      gap: 8px;
+    }
+
+    input {
+      flex: 1;
+      padding: 14px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+    }
+
+    button {
+      padding: 14px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
+    pre {
+      margin-top: 2rem;
+      width: 100%;
+      max-width: 720px;
+      background-color: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-size: 14px;
+      white-space: pre-wrap;
+      min-height: 220px;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
+    .label {
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .input-group {
+        flex-direction: column;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      pre {
+        font-size: 13px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <h1>Smart AI Agent UI</h1>
+  <h2>Tech Stack: Single Flask App → Claude (Anthropic) → CMP Logic</h2>
+
+  <div class="input-group">
+    <input type="text" id="command" placeholder="What would you like the agent to do?" />
+    <button onclick="sendCommand()">Send</button>
+  </div>
+
+  <pre id="response">Claude API response will appear here...</pre>
+
+  <script>
+    function sendCommand() {
+      const input = document.getElementById('command');
+      const output = document.getElementById('response');
+      const userText = input.value.trim();
+
+      if (!userText) {
+        output.textContent = "⚠️ Please enter a command.";
+        return;
+      }
+
+      output.textContent = "Sending...";
+
+      fetch("/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: userText })
+      })
+      .then(res => res.json())
+      .then(data => {
+        output.textContent = "Claude API response:\\n" + JSON.stringify(data.claude_output || data.response, null, 2);
+        output.scrollIntoView({ behavior: "smooth" });
+      })
+      .catch(err => {
+        output.textContent = "❌ Error: " + err.message;
+      });
+    }
+
+    // Allow Enter key to submit
+    document.getElementById('command').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendCommand();
+      }
+    });
+  </script>
+</body>
+</html>
+"""
+
+# ----- Routes -----
+
 @app.route("/")
 def root():
-    return send_from_directory(os.path.join(app.root_path, "frontend/src"), "index.html")
+    return HTML_TEMPLATE
 
-# ----- API Route -----
 @app.route('/execute', methods=['POST'])
 def execute():
     try:

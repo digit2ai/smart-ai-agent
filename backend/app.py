@@ -1,12 +1,12 @@
 # Flask CMP Server with Claude structured output and action routing
-from flask import Flask, request, jsonify, render_template
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
 import json
 import os
 from datetime import datetime
 
-app = Flask(__name__, template_folder="templates")
+app = Flask(__name__)
 CORS(app)
 
 CONFIG = {
@@ -67,20 +67,20 @@ def call_claude(prompt):
 
 def handle_create_task(data):
     print("[CMP] Creating task:", data.get("title"), data.get("due_date"))
-    return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}.", data
+    return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}."
 
 def handle_create_appointment(data):
     print("[CMP] Creating appointment:", data.get("title"), data.get("due_date"))
-    return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}.", data
+    return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
 
 def handle_send_message(data):
     print("[CMP] Sending message to", data.get("recipient"))
     print("Message:", data.get("message"))
-    return f"Message sent to {data.get('recipient')}.", data
+    return f"Message sent to {data.get('recipient')}."
 
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
-    return "Conversation log saved.", data
+    return "Conversation log saved."
 
 def dispatch_action(parsed):
     action = parsed.get("action")
@@ -93,7 +93,12 @@ def dispatch_action(parsed):
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
-        return f"Unknown action: {action}", parsed
+        return f"Unknown action: {action}"
+
+# ----- Serve frontend files -----
+@app.route("/frontend/src/<path:filename>")
+def serve_static(filename):
+    return send_from_directory("frontend/src", filename)
 
 # ----- API Route -----
 @app.route('/execute', methods=['POST'])
@@ -106,19 +111,14 @@ def execute():
         if "error" in result:
             return jsonify({"response": result["error"]}), 500
 
-        dispatch_result, debug_json = dispatch_action(result)
+        dispatch_result = dispatch_action(result)
         return jsonify({
             "response": dispatch_result,
-            "claude_output": debug_json
+            "claude_output": result
         })
 
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
-
-# ----- Serve frontend root index -----
-@app.route("/")
-def root_ui():
-    return render_template("index.html")
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))

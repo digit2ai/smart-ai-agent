@@ -103,7 +103,7 @@ def serve_static(filename):
 
 @app.route("/")
 def root_ui():
-    return send_from_directory("frontend/src", "index.html")
+    return send_from_directory(os.path.join(app.root_path, "frontend/src"), "index.html")
 
 # ----- API Route -----
 
@@ -126,16 +126,7 @@ def execute():
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
-# ----- Serve frontend root index -----
-@app.route("/")
-def root_ui():
-    return send_from_directory(os.path.join(app.root_path, "frontend/src"), "index.html")
-
-if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
-
-
+# ----- Launch App -----
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)

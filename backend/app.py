@@ -1,4 +1,4 @@
-# Flask CMP Server with PWA capabilities for mobile app experience
+# Flask CMP Server with PWA capabilities and Voice Input for mobile app experience
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -101,7 +101,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager",
+        "description": "AI-powered task and appointment manager with voice input",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f4f6f8",
@@ -148,7 +148,7 @@ self.addEventListener('fetch', event => {
 });
 ''', {'Content-Type': 'application/javascript'}
 
-# ----- Mobile-Optimized HTML Template -----
+# ----- Mobile-Optimized HTML Template with Voice Input -----
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
@@ -179,9 +179,8 @@ HTML_TEMPLATE = """
       align-items: center;
       justify-content: flex-start;
       color: white;
-      padding-top: max(1rem, env(safe-area-inset-top));
-      padding-bottom: max(1rem, env(safe-area-inset-bottom));
-      position: relative;
+      padding-top: env(safe-area-inset-top);
+      padding-bottom: env(safe-area-inset-bottom);
     }
 
     .container {
@@ -223,16 +222,13 @@ HTML_TEMPLATE = """
 
     input {
       flex: 1;
-      padding: 14px 16px;
+      padding: 12px 16px;
       font-size: 16px;
       border: none;
       border-radius: 25px;
       background: rgba(255,255,255,0.9);
       outline: none;
       color: #333;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
     }
 
     input::placeholder {
@@ -240,7 +236,7 @@ HTML_TEMPLATE = """
     }
 
     button {
-      padding: 14px 16px;
+      padding: 12px 16px;
       font-size: 16px;
       border: none;
       border-radius: 25px;
@@ -248,18 +244,8 @@ HTML_TEMPLATE = """
       color: white;
       cursor: pointer;
       font-weight: 600;
-      min-width: 50px;
+      min-width: 60px;
       transition: all 0.2s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      -webkit-appearance: none;
-      -moz-appearance: none;
-      appearance: none;
-      user-select: none;
-      -webkit-user-select: none;
-      -moz-user-select: none;
-      touch-action: manipulation;
     }
 
     button:hover {
@@ -269,56 +255,6 @@ HTML_TEMPLATE = """
 
     button:active {
       transform: translateY(0);
-      background: #004085;
-    }
-
-    .voice-btn {
-      background: #28a745;
-      border-radius: 50%;
-      width: 52px;
-      height: 52px;
-      padding: 0;
-      font-size: 20px;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .voice-btn:hover {
-      background: #1e7e34;
-    }
-
-    .voice-btn:active {
-      background: #155724;
-    }
-
-    .voice-btn.listening {
-      background: #dc3545;
-      animation: pulse 1s infinite;
-    }
-
-    .voice-btn.listening:hover {
-      background: #c82333;
-    }
-
-    .voice-btn.disabled {
-      background: #6c757d;
-      cursor: not-allowed;
-      opacity: 0.6;
-    }
-
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.05); }
-      100% { transform: scale(1); }
-    }
-
-    .voice-status {
-      margin-top: 0.5rem;
-      font-size: 0.85rem;
-      color: rgba(255,255,255,0.9);
-      text-align: center;
-      min-height: 20px;
-      font-weight: 500;
     }
 
     .response-container {
@@ -329,8 +265,6 @@ HTML_TEMPLATE = """
       border: 1px solid rgba(255,255,255,0.2);
       min-height: 200px;
       flex: 1;
-      overflow-y: auto;
-      max-height: 60vh;
     }
 
     .response-text {
@@ -342,26 +276,78 @@ HTML_TEMPLATE = """
       font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     }
 
-    .permissions-prompt {
-      background: rgba(255,193,7,0.9);
-      color: #333;
-      padding: 12px;
-      border-radius: 12px;
-      margin-bottom: 1rem;
-      text-align: center;
-      font-size: 0.9rem;
-      display: none;
+    .voice-controls {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 1rem;
+      margin-top: 1rem;
     }
 
-    .permissions-prompt button {
-      background: #007bff;
-      color: white;
+    .mic-button {
+      width: 60px;
+      height: 60px;
+      border-radius: 50%;
+      background: #dc3545;
       border: none;
-      padding: 8px 16px;
-      border-radius: 8px;
-      margin-top: 8px;
+      color: white;
+      font-size: 24px;
       cursor: pointer;
-      font-size: 14px;
+      transition: all 0.3s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .mic-button:hover {
+      background: #c82333;
+      transform: scale(1.05);
+    }
+
+    .mic-button.recording {
+      background: #28a745;
+      animation: pulse 1.5s infinite;
+    }
+
+    .mic-button.recording::before {
+      content: '';
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      width: 100%;
+      height: 100%;
+      background: rgba(255,255,255,0.3);
+      border-radius: 50%;
+      transform: translate(-50%, -50%) scale(0);
+      animation: ripple 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    @keyframes ripple {
+      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
+      100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
+    }
+
+    .voice-status {
+      font-size: 0.9rem;
+      color: rgba(255,255,255,0.8);
+      text-align: center;
+      margin-top: 0.5rem;
+      min-height: 20px;
+    }
+
+    .voice-not-supported {
+      color: #ffc107;
+      font-size: 0.8rem;
+      text-align: center;
+      margin-top: 0.5rem;
     }
 
     .install-prompt {
@@ -390,7 +376,6 @@ HTML_TEMPLATE = """
       cursor: pointer;
     }
 
-    /* Mobile specific improvements */
     @media (max-width: 480px) {
       .container {
         max-width: 100%;
@@ -404,58 +389,10 @@ HTML_TEMPLATE = """
         font-size: 1.5rem;
       }
       
-      .input-group {
-        gap: 0.75rem;
-      }
-      
-      input {
-        padding: 16px;
-        font-size: 16px; /* Prevents zoom on iOS */
-      }
-      
-      button {
-        padding: 16px;
-        min-height: 48px; /* Better touch target */
-      }
-      
-      .voice-btn {
-        width: 56px;
-        height: 56px;
-        font-size: 22px;
-      }
-    }
-
-    /* Landscape mode adjustments */
-    @media (orientation: landscape) and (max-height: 600px) {
-      body {
-        padding: 0.5rem;
-      }
-      
-      h1 {
-        font-size: 1.3rem;
-      }
-      
-      .subtitle {
-        font-size: 0.8rem;
-        margin-bottom: 0.5rem;
-      }
-      
-      .response-container {
-        max-height: 40vh;
-      }
-    }
-
-    /* High DPI displays */
-    @media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
-      .voice-btn {
-        box-shadow: 0 2px 8px rgba(0,0,0,0.2);
-      }
-    }
-
-    /* Dark mode support */
-    @media (prefers-color-scheme: dark) {
-      input {
-        background: rgba(255,255,255,0.95);
+      .mic-button {
+        width: 55px;
+        height: 55px;
+        font-size: 20px;
       }
     }
   </style>
@@ -463,25 +400,25 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>🤖 Smart AI Agent</h1>
-    <div class="subtitle">AI-powered task and appointment manager</div>
-    
-    <div class="permissions-prompt" id="permissionsPrompt">
-      <div>🎤 Microphone access needed for voice commands</div>
-      <button onclick="requestMicrophonePermission()">Enable Microphone</button>
-    </div>
+    <div class="subtitle">AI-powered task and appointment manager with voice input</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Type or speak your command..." autocomplete="off" autocorrect="off" spellcheck="false" />
-        <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()" title="Voice input">🎤</button>
+        <input type="text" id="command" placeholder="What would you like me to do?" />
         <button onclick="sendCommand()">Send</button>
       </div>
-      <div class="voice-status" id="voiceStatus"></div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation"</div>
+      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation". You can also use voice input!</div>
     </div>
+
+    <div class="voice-controls">
+      <button class="mic-button" id="micButton" onclick="toggleVoiceRecording()">
+        🎤
+      </button>
+    </div>
+    <div class="voice-status" id="voiceStatus"></div>
   </div>
 
   <div class="install-prompt" id="installPrompt">
@@ -493,213 +430,74 @@ HTML_TEMPLATE = """
   <script>
     let deferredPrompt;
     let recognition;
-    let isListening = false;
-    let speechSynthesis = window.speechSynthesis;
-    let microphonePermission = false;
-    let recognitionTimeout;
-    let silenceTimeout;
+    let isRecording = false;
+    let voiceSupported = false;
 
-    // Mobile-specific speech recognition setup
+    // Initialize speech recognition
     function initSpeechRecognition() {
-      // Check for speech recognition support
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      
-      if (!SpeechRecognition) {
-        console.log('Speech recognition not supported');
-        document.getElementById('voiceBtn').classList.add('disabled');
-        document.getElementById('voiceStatus').textContent = '❌ Voice not supported';
-        return false;
-      }
-
-      recognition = new SpeechRecognition();
-      
-      // Mobile-optimized settings
-      recognition.continuous = false;
-      recognition.interimResults = true;
-      recognition.lang = navigator.language || 'en-US';
-      recognition.maxAlternatives = 1;
-      
-      recognition.onstart = function() {
-        isListening = true;
-        document.getElementById('voiceBtn').classList.add('listening');
-        document.getElementById('voiceStatus').textContent = '🔴 Listening... Speak clearly';
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
         
-        // Set timeout for recognition
-        recognitionTimeout = setTimeout(() => {
-          if (isListening) {
-            recognition.stop();
-            document.getElementById('voiceStatus').textContent = '⏰ Listening timeout';
-          }
-        }, 10000); // 10 second timeout
-      };
-
-      recognition.onresult = function(event) {
-        clearTimeout(recognitionTimeout);
-        clearTimeout(silenceTimeout);
+        recognition.continuous = false;
+        recognition.interimResults = false;
+        recognition.lang = 'en-US';
         
-        let transcript = '';
-        let isFinal = false;
+        recognition.onstart = function() {
+          isRecording = true;
+          document.getElementById('micButton').classList.add('recording');
+          document.getElementById('voiceStatus').textContent = '🎤 Listening...';
+        };
         
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          if (event.results[i].isFinal) {
-            transcript += event.results[i][0].transcript;
-            isFinal = true;
-          } else {
-            transcript += event.results[i][0].transcript;
-          }
-        }
-        
-        if (transcript.trim()) {
+        recognition.onresult = function(event) {
+          const transcript = event.results[0][0].transcript;
           document.getElementById('command').value = transcript;
+          document.getElementById('voiceStatus').textContent = `📝 Heard: "${transcript}"`;
           
-          if (isFinal) {
-            document.getElementById('voiceStatus').textContent = `✅ Heard: "${transcript.trim()}"`;
-            
-            // Auto-send after brief delay
-            setTimeout(() => {
-              sendCommand();
-            }, 1500);
-          } else {
-            document.getElementById('voiceStatus').textContent = `🎤 "${transcript.trim()}"`;
-            
-            // Set silence timeout
-            silenceTimeout = setTimeout(() => {
-              if (isListening) {
-                recognition.stop();
-              }
-            }, 3000);
-          }
-        }
-      };
-
-      recognition.onerror = function(event) {
-        clearTimeout(recognitionTimeout);
-        clearTimeout(silenceTimeout);
+          // Auto-submit after voice input
+          setTimeout(() => {
+            sendCommand();
+          }, 1000);
+        };
         
-        console.error('Speech recognition error:', event.error);
+        recognition.onerror = function(event) {
+          console.error('Speech recognition error:', event.error);
+          document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
+          stopRecording();
+        };
         
-        let errorMsg = '';
-        switch(event.error) {
-          case 'no-speech':
-            errorMsg = '🔇 No speech detected. Try again.';
-            break;
-          case 'audio-capture':
-            errorMsg = '🎤 Microphone error. Check permissions.';
-            break;
-          case 'not-allowed':
-            errorMsg = '🚫 Microphone access denied';
-            showPermissionsPrompt();
-            break;
-          case 'network':
-            errorMsg = '📶 Network error. Check connection.';
-            break;
-          case 'service-not-allowed':
-            errorMsg = '🔒 Voice service not available';
-            break;
-          default:
-            errorMsg = `❌ Error: ${event.error}`;
-        }
+        recognition.onend = function() {
+          stopRecording();
+        };
         
-        document.getElementById('voiceStatus').textContent = errorMsg;
-        stopListening();
-      };
-
-      recognition.onend = function() {
-        clearTimeout(recognitionTimeout);
-        clearTimeout(silenceTimeout);
-        stopListening();
-      };
-
-      return true;
-    }
-
-    function requestMicrophonePermission() {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(function(stream) {
-            microphonePermission = true;
-            document.getElementById('permissionsPrompt').style.display = 'none';
-            document.getElementById('voiceStatus').textContent = '🎤 Microphone ready';
-            
-            // Stop the stream as we only needed permission
-            stream.getTracks().forEach(track => track.stop());
-          })
-          .catch(function(err) {
-            console.error('Microphone permission denied:', err);
-            document.getElementById('voiceStatus').textContent = '🚫 Microphone access denied';
-          });
-      }
-    }
-
-    function showPermissionsPrompt() {
-      document.getElementById('permissionsPrompt').style.display = 'block';
-    }
-
-    function toggleVoice() {
-      if (!recognition) {
-        document.getElementById('voiceStatus').textContent = '❌ Voice not supported in this browser';
-        return;
-      }
-
-      if (document.getElementById('voiceBtn').classList.contains('disabled')) {
-        return;
-      }
-
-      if (isListening) {
-        recognition.stop();
-        document.getElementById('voiceStatus').textContent = '⏹️ Stopping...';
+        voiceSupported = true;
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
       } else {
-        // Check microphone permission first
-        if (!microphonePermission) {
-          requestMicrophonePermission();
-          return;
-        }
-        
+        document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
+        document.getElementById('micButton').style.display = 'none';
+      }
+    }
+
+    function toggleVoiceRecording() {
+      if (!voiceSupported) return;
+      
+      if (isRecording) {
+        recognition.stop();
+      } else {
         try {
           recognition.start();
-        } catch (e) {
-          console.error('Failed to start recognition:', e);
-          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice recognition';
+        } catch (error) {
+          console.error('Failed to start speech recognition:', error);
+          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input';
         }
       }
     }
 
-    function stopListening() {
-      isListening = false;
-      clearTimeout(recognitionTimeout);
-      clearTimeout(silenceTimeout);
-      document.getElementById('voiceBtn').classList.remove('listening');
-      
+    function stopRecording() {
+      isRecording = false;
+      document.getElementById('micButton').classList.remove('recording');
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
-      }
-    }
-
-    function speakResponse(text) {
-      if (!speechSynthesis) return;
-      
-      // Cancel any ongoing speech
-      speechSynthesis.cancel();
-      
-      // Clean up the text for speech
-      const cleanText = text.replace(/[📋✅❌🤔⚠️🔴🎤🔇📶🚫🔒⏰⏹️]/g, '').replace(/\n/g, ' ');
-      
-      if (cleanText.trim()) {
-        const utterance = new SpeechSynthesisUtterance(cleanText);
-        utterance.rate = 0.9;
-        utterance.pitch = 1;
-        utterance.volume = 0.8;
-        
-        // Use a more natural voice if available
-        const voices = speechSynthesis.getVoices();
-        const preferredVoice = voices.find(voice => 
-          voice.lang.startsWith('en') && voice.localService
-        );
-        if (preferredVoice) {
-          utterance.voice = preferredVoice;
-        }
-        
-        speechSynthesis.speak(utterance);
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
       }
     }
 
@@ -732,40 +530,17 @@ HTML_TEMPLATE = """
       navigator.serviceWorker.register('/sw.js');
     }
 
-    // Initialize speech recognition when page loads
-    window.addEventListener('load', function() {
-      if (initSpeechRecognition()) {
-        // Check for microphone permission on load
-        if (navigator.permissions) {
-          navigator.permissions.query({ name: 'microphone' }).then(function(result) {
-            if (result.state === 'granted') {
-              microphonePermission = true;
-              document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
-            } else if (result.state === 'prompt') {
-              document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to enable voice';
-            } else {
-              showPermissionsPrompt();
-            }
-          });
-        } else {
-          document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
-        }
-      }
-    });
-
     function sendCommand() {
       const input = document.getElementById('command');
       const output = document.getElementById('response');
       const userText = input.value.trim();
 
       if (!userText) {
-        output.textContent = "⚠️ Please enter a command.";
-        document.getElementById('voiceStatus').textContent = '';
+        output.textContent = "⚠️ Please enter a command or use voice input.";
         return;
       }
 
       output.textContent = "🤔 Processing...";
-      document.getElementById('voiceStatus').textContent = '';
 
       fetch("/execute", {
         method: "POST",
@@ -774,19 +549,61 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        const responseText = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
-        output.textContent = responseText;
+        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
-        
-        // Speak the response (just the main response, not the JSON details)
-        speakResponse(data.response || "Task completed");
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak' : '';
       })
       .catch(err => {
-        const errorText = "❌ Error: " + err.message;
-        output.textContent = errorText;
-        speakResponse("Sorry, there was an error processing your request");
+        output.textContent = "❌ Error: " + err.message;
       });
     }
 
     // Allow Enter key to submit
-    document.getElementById('command').addEventListener('keypress', function(
+    document.getElementById('command').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendCommand();
+      }
+    });
+
+    // Handle keyboard on mobile
+    document.getElementById('command').addEventListener('focus', function() {
+      setTimeout(() => {
+        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
+    });
+
+    // Initialize speech recognition when page loads
+    window.addEventListener('load', initSpeechRecognition);
+  </script>
+</body>
+</html>
+"""
+
+# ----- Routes -----
+
+@app.route("/")
+def root():
+    return HTML_TEMPLATE
+
+@app.route('/execute', methods=['POST'])
+def execute():
+    try:
+        data = request.json
+        prompt = data.get("text", "")
+        result = call_claude(prompt)
+
+        if "error" in result:
+            return jsonify({"response": result["error"]}), 500
+
+        dispatch_result = dispatch_action(result)
+        return jsonify({
+            "response": dispatch_result,
+            "claude_output": result
+        })
+
+    except Exception as e:
+        return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
+
+if __name__ == '__main__':
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)

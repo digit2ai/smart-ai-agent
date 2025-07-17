@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html>
+<head><title>Smart AI Agent</title></head>
+<body>
+<h1>Smart AI Agent UI</h1>
+<input type='text' id='command' placeholder='Type a command...'/>
+<button onclick='sendCommand()'>Send</button>
+<pre id='response'></pre>
+<script>
+function sendCommand() {
+  const cmd = document.getElementById('command').value;
+  fetch('/execute', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ text: cmd })
+  })
+  .then(res => res.json())
+  .then(data => {
+    document.getElementById('response').textContent = data.response;
+  });
+}
+</script>
+</body>
+</html>

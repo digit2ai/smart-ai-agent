@@ -1,0 +1,5 @@
+{
+  "openai_api_key": "",
+  "claude_api_key": "sk-...YOUR-KEY...",
+  "provider": "claude"
+}

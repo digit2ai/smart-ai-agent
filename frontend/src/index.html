@@ -1,67 +1,68 @@
+
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Smart AI Agent UI</title>
   <style>
     body {
-      font-family: system-ui, sans-serif;
-      background: #f4f6f8;
+      font-family: "Segoe UI", sans-serif;
+      background-color: #f5f7fa;
+      margin: 0;
+      padding: 2rem;
       display: flex;
       flex-direction: column;
       align-items: center;
-      padding: 4rem;
     }
     h1 {
       font-size: 2rem;
-      font-weight: bold;
-      margin-bottom: 0.5rem;
+      color: #1a202c;
     }
     h2 {
       font-size: 1rem;
-      font-weight: normal;
-      color: #777;
-      margin-top: 0;
+      color: #4a5568;
       margin-bottom: 2rem;
     }
-    #command {
-      width: 600px;
+    input {
+      width: 500px;
       padding: 12px;
       font-size: 16px;
-      border: 1px solid #ccc;
+      border: 1px solid #cbd5e0;
       border-radius: 6px;
-      margin-bottom: 1rem;
+      margin-right: 10px;
     }
     button {
       padding: 12px 20px;
       font-size: 16px;
-      background-color: #007bff;
+      background-color: #3182ce;
       color: white;
       border: none;
       border-radius: 6px;
-      margin-left: 10px;
       cursor: pointer;
     }
     button:hover {
-      background-color: #0056b3;
+      background-color: #2b6cb0;
     }
     pre {
-      width: 600px;
-      min-height: 300px;
-      background: #fff;
-      padding: 1.5rem;
-      border-radius: 8px;
-      border: 1px solid #ddd;
-      font-size: 14px;
-      line-height: 1.4;
-      overflow-x: auto;
+      margin-top: 2rem;
+      width: 80%;
+      max-width: 700px;
+      min-height: 200px;
+      padding: 1rem;
+      background-color: #edf2f7;
+      border: 1px solid #e2e8f0;
+      border-radius: 6px;
+      font-family: monospace;
       white-space: pre-wrap;
+      word-break: break-word;
     }
   </style>
 </head>
 <body>
   <h1>Smart AI Agent UI</h1>
   <h2>Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</h2>
-  <div style="display: flex;">
+  <div>
     <input type="text" id="command" placeholder="What would you like the agent to do?" />
     <button onclick="sendCommand()">Send</button>
   </div>
@@ -69,25 +70,30 @@
 
   <script>
     function sendCommand() {
-      const cmd = document.getElementById('command').value;
-      document.getElementById('response').textContent = '⏳ Processing...';
+      const input = document.getElementById("command");
+      const responseBox = document.getElementById("response");
+      const payload = { text: input.value };
 
-      fetch('/execute', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ text: cmd })
+      responseBox.textContent = "Loading...";
+
+      fetch("/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload)
       })
       .then(async res => {
         const raw = await res.text();
         try {
-          const data = JSON.parse(raw);
-          document.getElementById('response').textContent = JSON.stringify(data, null, 2);
-        } catch (err) {
-          document.getElementById('response').textContent = `⚠️ JSON parse error:\n${err.message}\n\nRaw:\n${raw}`;
+          const json = JSON.parse(raw);
+          responseBox.textContent = JSON.stringify(json, null, 2);
+        } catch {
+          responseBox.textContent = "⚠️ Error parsing response:
+
+" + raw;
         }
       })
       .catch(err => {
-        document.getElementById('response').textContent = '❌ Request failed: ' + err.message;
+        responseBox.textContent = "❌ Fetch error: " + err.message;
       });
     }
   </script>

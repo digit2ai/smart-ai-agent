@@ -9,7 +9,7 @@
 <script>
 function sendCommand() {
   const cmd = document.getElementById('command').value;
-  fetch('/execute', {
+  fetch('https://smart-ai-agent.onrender.com/execute', {
     method: 'POST',
     headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({ text: cmd })

@@ -1,85 +1,133 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
+  <meta charset="UTF-8">
   <title>Smart AI Agent</title>
   <style>
     body {
-      font-family: sans-serif;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      background-color: #f4f6f8;
+      margin: 0;
       padding: 2rem;
-      background-color: #f9f9f9;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
     }
+
     h1 {
-      margin-bottom: 0;
+      font-size: 2rem;
+      margin-bottom: 0.3rem;
     }
+
     h2 {
-      font-size: 1rem;
+      font-size: 0.95rem;
       font-weight: normal;
-      color: #666;
-      margin-top: 0.3rem;
+      color: #777;
       margin-bottom: 2rem;
     }
+
+    .input-group {
+      display: flex;
+      width: 100%;
+      max-width: 720px;
+      gap: 8px;
+    }
+
     input {
-      width: 600px;
-      padding: 12px;
+      flex: 1;
+      padding: 14px;
       font-size: 16px;
       border: 1px solid #ccc;
-      border-radius: 4px;
+      border-radius: 8px;
     }
+
     button {
-      padding: 12px 20px;
+      padding: 14px 20px;
       font-size: 16px;
-      margin-left: 10px;
+      border: none;
+      border-radius: 8px;
+      background-color: #007bff;
+      color: white;
       cursor: pointer;
     }
+
+    button:hover {
+      background-color: #0056b3;
+    }
+
     pre {
-      width: 600px;
-      background: #f4f4f4;
-      padding: 1rem;
       margin-top: 2rem;
-      border-radius: 6px;
-      min-height: 350px;
+      width: 100%;
+      max-width: 720px;
+      background-color: #fff;
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      padding: 1.5rem;
+      font-size: 14px;
       white-space: pre-wrap;
-      line-height: 1.5;
-      font-family: monospace;
+      min-height: 220px;
+      line-height: 1.6;
+      overflow-x: auto;
+    }
+
+    .label {
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+
+    @media (max-width: 768px) {
+      .input-group {
+        flex-direction: column;
+      }
+
+      button {
+        width: 100%;
+      }
+
+      pre {
+        font-size: 13px;
+      }
     }
   </style>
 </head>
 <body>
-<h1>Smart AI Agent UI</h1>
-<h2>Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → JSON → UI Response</h2>
-<input type='text' id='command' placeholder='Type a command...' />
-<button onclick='sendCommand()'>Send</button>
-<pre id='response'></pre>
+  <h1>Smart AI Agent UI</h1>
+  <h2>Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</h2>
 
-<script>
-function sendCommand() {
-  const cmd = document.getElementById('command').value;
-  document.getElementById('response').textContent = 'Sending...';
+  <div class="input-group">
+    <input type="text" id="command" placeholder="What would you like the agent to do?" />
+    <button onclick="sendCommand()">Send</button>
+  </div>
 
-  fetch('https://smart-ai-agent.onrender.com/execute', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({ text: cmd })
-  })
-  .then(async res => {
-    const contentType = res.headers.get("Content-Type");
-    const raw = await res.text();
-    try {
-      if (contentType && contentType.includes("application/json")) {
-        const data = JSON.parse(raw);
-        document.getElementById('response').textContent = 
-          "Claude API response:\n" + JSON.stringify(data.response, null, 2);
-      } else {
-        throw new Error("Non-JSON response: " + raw);
+  <pre id="response">Claude API response will appear here...</pre>
+
+  <script>
+    function sendCommand() {
+      const input = document.getElementById('command');
+      const output = document.getElementById('response');
+      const userText = input.value.trim();
+
+      if (!userText) {
+        output.textContent = "⚠️ Please enter a command.";
+        return;
       }
-    } catch (err) {
-      document.getElementById('response').textContent = '⚠️ JSON parse error: ' + err.message + '\nRaw response: ' + raw;
+
+      output.textContent = "Sending...";
+
+      fetch("https://smart-ai-agent.onrender.com/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: userText })
+      })
+      .then(res => res.json())
+      .then(data => {
+        output.textContent = "Claude API response:\n" + JSON.stringify(data.claude_output || data.response, null, 2);
+        output.scrollIntoView({ behavior: "smooth" });
+      })
+      .catch(err => {
+        output.textContent = "❌ Error: " + err.message;
+      });
     }
-  })
-  .catch(err => {
-    document.getElementById('response').textContent = '❌ Fetch failed: ' + err.message;
-  });
-}
-</script>
+  </script>
 </body>
 </html>

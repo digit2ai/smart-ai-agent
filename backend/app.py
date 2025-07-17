@@ -6,7 +6,7 @@ import json
 import os
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all domains
+CORS(app)
 
 CONFIG = {
     "provider": "claude",
@@ -18,31 +18,44 @@ def call_openai(prompt):
     return {"response": "OpenAI not yet wired in this version."}
 
 def call_claude(prompt):
-    headers = {
-        "x-api-key": CONFIG["claude_api_key"],
-        "anthropic-version": "2023-06-01",
-        "content-type": "application/json"
-    }
+    try:
+        headers = {
+            "x-api-key": CONFIG["claude_api_key"],
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
 
-    body = {
-        "model": "claude-3-sonnet-20240229",
-        "max_tokens": 1000,
-        "temperature": 0.7,
-        "messages": [{"role": "user", "content": prompt}]
-    }
+        body = {
+            "model": "claude-3-sonnet-20240229",
+            "max_tokens": 1000,
+            "temperature": 0.7,
+            "messages": [{"role": "user", "content": prompt}]
+        }
 
-    res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
-    return res.json()["content"][0]["text"]
+        res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
+        response_json = res.json()
+        if "content" in response_json:
+            return response_json["content"][0]["text"]
+        else:
+            print("Claude API error:", json.dumps(response_json, indent=2))
+            return f"Claude API error: {response_json.get('error', 'Unknown error')}"
+    except Exception as e:
+        print("Exception in call_claude:", str(e))
+        return f"Server error: {str(e)}"
 
 @app.route('/execute', methods=['POST'])
 def execute():
-    data = request.json
-    prompt = data.get("text", "")
-    if CONFIG["provider"] == "claude":
-        result = call_claude(prompt)
-    else:
-        result = call_openai(prompt)
-    return jsonify({"response": result})
+    try:
+        data = request.json
+        prompt = data.get("text", "")
+        if CONFIG["provider"] == "claude":
+            result = call_claude(prompt)
+        else:
+            result = call_openai(prompt)
+        return jsonify({"response": result})
+    except Exception as e:
+        print("Top-level error:", str(e))
+        return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))

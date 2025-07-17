@@ -1,5 +1,5 @@
 # Flask CMP Server with Claude structured output and action routing
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
 import json
@@ -95,8 +95,12 @@ def dispatch_action(parsed):
     else:
         return f"Unknown action: {action}"
 
-# ----- API Route -----
+# ----- Serve frontend files -----
+@app.route("/frontend/src/<path:filename>")
+def serve_static(filename):
+    return send_from_directory("frontend/src", filename)
 
+# ----- API Route -----
 @app.route('/execute', methods=['POST'])
 def execute():
     try:

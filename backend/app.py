@@ -4,7 +4,6 @@ from flask_cors import CORS
 import requests
 import json
 import os
-from datetime import datetime
 
 app = Flask(__name__)
 CORS(app)
@@ -63,8 +62,6 @@ def call_claude(prompt):
     except Exception as e:
         return {"error": str(e)}
 
-# ----- CMP Action Handlers -----
-
 def handle_create_task(data):
     print("[CMP] Creating task:", data.get("title"), data.get("due_date"))
     return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}."
@@ -95,31 +92,23 @@ def dispatch_action(parsed):
     else:
         return f"Unknown action: {action}"
 
-# ----- Serve frontend files -----
-@app.route("/frontend/src/<path:filename>")
-def serve_static(filename):
-    return send_from_directory("frontend/src", filename)
+@app.route("/")
+def root_ui():
+    return send_from_directory(os.path.join(app.root_path, "frontend/src"), "index.html")
 
-# ----- API Route -----
-@app.route('/execute', methods=['POST'])
+@app.route("/execute", methods=["POST"])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
         result = call_claude(prompt)
-
         if "error" in result:
             return jsonify({"response": result["error"]}), 500
-
         dispatch_result = dispatch_action(result)
-        return jsonify({
-            "response": dispatch_result,
-            "claude_output": result
-        })
-
+        return jsonify({"response": dispatch_result, "claude_output": result})
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)

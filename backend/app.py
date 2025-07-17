@@ -96,11 +96,17 @@ def dispatch_action(parsed):
         return f"Unknown action: {action}"
 
 # ----- Serve frontend files -----
+
 @app.route("/frontend/src/<path:filename>")
 def serve_static(filename):
     return send_from_directory("frontend/src", filename)
 
+@app.route("/")
+def root_ui():
+    return send_from_directory("frontend/src", "index.html")
+
 # ----- API Route -----
+
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
@@ -123,7 +129,3 @@ def execute():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
-    @app.route("/")
-def root_ui():
-    return send_from_directory("frontend/src", "index.html")
-

@@ -244,8 +244,11 @@ HTML_TEMPLATE = """
       color: white;
       cursor: pointer;
       font-weight: 600;
-      min-width: 60px;
+      min-width: 50px;
       transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
 
     button:hover {
@@ -255,6 +258,38 @@ HTML_TEMPLATE = """
 
     button:active {
       transform: translateY(0);
+    }
+
+    .voice-btn {
+      background: #28a745;
+      border-radius: 50%;
+      width: 50px;
+      height: 50px;
+      padding: 0;
+      font-size: 18px;
+    }
+
+    .voice-btn:hover {
+      background: #1e7e34;
+    }
+
+    .voice-btn.listening {
+      background: #dc3545;
+      animation: pulse 1s infinite;
+    }
+
+    @keyframes pulse {
+      0% { transform: scale(1); }
+      50% { transform: scale(1.1); }
+      100% { transform: scale(1); }
+    }
+
+    .voice-status {
+      margin-top: 0.5rem;
+      font-size: 0.85rem;
+      color: rgba(255,255,255,0.8);
+      text-align: center;
+      min-height: 20px;
     }
 
     .response-container {
@@ -324,9 +359,11 @@ HTML_TEMPLATE = """
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="What would you like me to do?" />
+        <input type="text" id="command" placeholder="Type or speak your command..." />
+        <button class="voice-btn" id="voiceBtn" onclick="toggleVoice()">🎤</button>
         <button onclick="sendCommand()">Send</button>
       </div>
+      <div class="voice-status" id="voiceStatus"></div>
     </div>
 
     <div class="response-container">
@@ -342,6 +379,91 @@ HTML_TEMPLATE = """
 
   <script>
     let deferredPrompt;
+    let recognition;
+    let isListening = false;
+    let speechSynthesis = window.speechSynthesis;
+
+    // Initialize speech recognition
+    function initSpeechRecognition() {
+      if ('webkitSpeechRecognition' in window) {
+        recognition = new webkitSpeechRecognition();
+      } else if ('SpeechRecognition' in window) {
+        recognition = new SpeechRecognition();
+      } else {
+        console.log('Speech recognition not supported');
+        document.getElementById('voiceBtn').style.display = 'none';
+        return;
+      }
+
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+
+      recognition.onstart = function() {
+        isListening = true;
+        document.getElementById('voiceBtn').classList.add('listening');
+        document.getElementById('voiceStatus').textContent = '🔴 Listening... Speak now';
+      };
+
+      recognition.onresult = function(event) {
+        const transcript = event.results[0][0].transcript;
+        document.getElementById('command').value = transcript;
+        document.getElementById('voiceStatus').textContent = `✅ Heard: "${transcript}"`;
+        
+        // Auto-send after voice input
+        setTimeout(() => {
+          sendCommand();
+        }, 1000);
+      };
+
+      recognition.onerror = function(event) {
+        console.error('Speech recognition error:', event.error);
+        document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
+        stopListening();
+      };
+
+      recognition.onend = function() {
+        stopListening();
+      };
+    }
+
+    function toggleVoice() {
+      if (!recognition) {
+        alert('Speech recognition is not supported in this browser');
+        return;
+      }
+
+      if (isListening) {
+        recognition.stop();
+      } else {
+        recognition.start();
+      }
+    }
+
+    function stopListening() {
+      isListening = false;
+      document.getElementById('voiceBtn').classList.remove('listening');
+      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
+        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak';
+      }
+    }
+
+    function speakResponse(text) {
+      if (!speechSynthesis) return;
+      
+      // Cancel any ongoing speech
+      speechSynthesis.cancel();
+      
+      // Clean up the text for speech
+      const cleanText = text.replace(/[📋✅❌🤔⚠️🔴]/g, '').replace(/\n/g, ' ');
+      
+      const utterance = new SpeechSynthesisUtterance(cleanText);
+      utterance.rate = 0.9;
+      utterance.pitch = 1;
+      utterance.volume = 0.8;
+      
+      speechSynthesis.speak(utterance);
+    }
 
     // PWA Install prompt
     window.addEventListener('beforeinstallprompt', (e) => {
@@ -372,6 +494,9 @@ HTML_TEMPLATE = """
       navigator.serviceWorker.register('/sw.js');
     }
 
+    // Initialize speech recognition when page loads
+    window.addEventListener('load', initSpeechRecognition);
+
     function sendCommand() {
       const input = document.getElementById('command');
       const output = document.getElementById('response');
@@ -379,10 +504,12 @@ HTML_TEMPLATE = """
 
       if (!userText) {
         output.textContent = "⚠️ Please enter a command.";
+        document.getElementById('voiceStatus').textContent = '';
         return;
       }
 
       output.textContent = "🤔 Processing...";
+      document.getElementById('voiceStatus').textContent = '';
 
       fetch("/execute", {
         method: "POST",
@@ -391,11 +518,17 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
+        const responseText = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
+        output.textContent = responseText;
         input.value = "";
+        
+        // Speak the response (just the main response, not the JSON details)
+        speakResponse(data.response || "Task completed");
       })
       .catch(err => {
-        output.textContent = "❌ Error: " + err.message;
+        const errorText = "❌ Error: " + err.message;
+        output.textContent = errorText;
+        speakResponse("Sorry, there was an error processing your request");
       });
     }
 
@@ -411,6 +544,15 @@ HTML_TEMPLATE = """
       setTimeout(() => {
         this.scrollIntoView({ behavior: 'smooth', block: 'center' });
       }, 300);
+    });
+
+    // Voice commands shortcuts
+    document.addEventListener('keydown', function(e) {
+      // Press Space to activate voice (when not typing)
+      if (e.code === 'Space' && document.activeElement !== document.getElementById('command')) {
+        e.preventDefault();
+        toggleVoice();
+      }
     });
   </script>
 </body>

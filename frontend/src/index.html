@@ -40,6 +40,7 @@
       min-height: 350px;
       white-space: pre-wrap;
       line-height: 1.5;
+      font-family: monospace;
     }
   </style>
 </head>
@@ -66,7 +67,8 @@ function sendCommand() {
     try {
       if (contentType && contentType.includes("application/json")) {
         const data = JSON.parse(raw);
-        document.getElementById('response').textContent = data.response || JSON.stringify(data);
+        document.getElementById('response').textContent = 
+          "Claude API response:\n" + JSON.stringify(data.response, null, 2);
       } else {
         throw new Error("Non-JSON response: " + raw);
       }

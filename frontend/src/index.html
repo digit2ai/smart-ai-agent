@@ -1,28 +1,93 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Smart AI Agent</title>
+  <title>Smart AI Agent UI</title>
+  <style>
+    body {
+      font-family: system-ui, sans-serif;
+      background: #f4f6f8;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 4rem;
+    }
+    h1 {
+      font-size: 2rem;
+      font-weight: bold;
+      margin-bottom: 0.5rem;
+    }
+    h2 {
+      font-size: 1rem;
+      font-weight: normal;
+      color: #777;
+      margin-top: 0;
+      margin-bottom: 2rem;
+    }
+    #command {
+      width: 600px;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      margin-bottom: 1rem;
+    }
+    button {
+      padding: 12px 20px;
+      font-size: 16px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 6px;
+      margin-left: 10px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    pre {
+      width: 600px;
+      min-height: 300px;
+      background: #fff;
+      padding: 1.5rem;
+      border-radius: 8px;
+      border: 1px solid #ddd;
+      font-size: 14px;
+      line-height: 1.4;
+      overflow-x: auto;
+      white-space: pre-wrap;
+    }
+  </style>
 </head>
 <body>
   <h1>Smart AI Agent UI</h1>
-  <input type="text" id="command" placeholder="Type a command..." />
-  <button onclick="sendCommand()">Send</button>
-  <pre id="response"></pre>
+  <h2>Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</h2>
+  <div style="display: flex;">
+    <input type="text" id="command" placeholder="What would you like the agent to do?" />
+    <button onclick="sendCommand()">Send</button>
+  </div>
+  <pre id="response">Claude API response will appear here...</pre>
+
   <script>
     function sendCommand() {
       const cmd = document.getElementById('command').value;
-      document.getElementById('response').textContent = 'Sending...';
+      document.getElementById('response').textContent = '⏳ Processing...';
+
       fetch('/execute', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({ text: cmd })
       })
-      .then(res => res.json())
-      .then(data => {
-        document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+      .then(async res => {
+        const raw = await res.text();
+        try {
+          const data = JSON.parse(raw);
+          document.getElementById('response').textContent = JSON.stringify(data, null, 2);
+        } catch (err) {
+          document.getElementById('response').textContent = `⚠️ JSON parse error:\n${err.message}\n\nRaw:\n${raw}`;
+        }
       })
       .catch(err => {
-        document.getElementById('response').textContent = 'Error: ' + err.message;
+        document.getElementById('response').textContent = '❌ Request failed: ' + err.message;
       });
     }
   </script>

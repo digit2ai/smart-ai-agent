@@ -1,14 +1,19 @@
-# Flask CMP Server with PWA capabilities, Voice Input, and Twilio MCP integration
+# Flask CMP Server with PWA capabilities, Voice Input, and Direct Twilio integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
-import asyncio
-import subprocess
-import tempfile
 from datetime import datetime
 from typing import Dict, Any, Optional
+
+# Import Twilio REST API client
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    print("Twilio library not installed. Run: pip install twilio")
 
 app = Flask(__name__)
 CORS(app)
@@ -19,7 +24,6 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    "mcp_server_path": os.getenv("MCP_SERVER_PATH", "mcp-server-twilio")
 }
 
 INSTRUCTION_PROMPT = """
@@ -28,7 +32,7 @@ You are an intelligent assistant. Respond ONLY with valid JSON using one of the 
 Supported actions:
 - create_task
 - create_appointment
-- send_message (now supports SMS via Twilio)
+- send_message (supports SMS via Twilio)
 - log_conversation
 
 Each response must use this structure:
@@ -50,121 +54,70 @@ Only include fields relevant to the action.
 Do not add extra commentary.
 """
 
-class TwilioMCPClient:
-    """Client for interacting with Twilio MCP server"""
+class TwilioClient:
+    """Direct Twilio REST API client"""
     
     def __init__(self):
-        self.process = None
-        self.connected = False
+        self.account_sid = CONFIG["twilio_account_sid"]
+        self.auth_token = CONFIG["twilio_auth_token"]
+        self.from_number = CONFIG["twilio_phone_number"]
+        self.client = None
+        
+        if TWILIO_AVAILABLE and self.account_sid and self.auth_token:
+            try:
+                self.client = Client(self.account_sid, self.auth_token)
+                print("✅ Twilio client initialized successfully")
+            except Exception as e:
+                print(f"❌ Failed to initialize Twilio client: {e}")
+        else:
+            print("⚠️ Twilio not configured or library missing")
     
-    async def connect(self):
-        """Start the MCP server process"""
+    def send_sms(self, to: str, message: str) -> Dict[str, Any]:
+        """Send SMS via Twilio REST API"""
+        if not self.client:
+            return {"error": "Twilio client not initialized"}
+        
+        if not self.from_number:
+            return {"error": "Twilio phone number not configured"}
+        
         try:
-            # Start MCP server as subprocess
-            self.process = await asyncio.create_subprocess_exec(
-                CONFIG["mcp_server_path"],
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                env={
-                    **os.environ,
-                    "TWILIO_ACCOUNT_SID": CONFIG["twilio_account_sid"],
-                    "TWILIO_AUTH_TOKEN": CONFIG["twilio_auth_token"],
-                    "TWILIO_PHONE_NUMBER": CONFIG["twilio_phone_number"]
-                }
+            # Send the message
+            message_response = self.client.messages.create(
+                body=message,
+                from_=self.from_number,
+                to=to
             )
             
-            # Initialize MCP connection
-            init_message = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {
-                        "tools": {}
-                    },
-                    "clientInfo": {
-                        "name": "flask-twilio-client",
-                        "version": "1.0.0"
-                    }
-                }
+            return {
+                "success": True,
+                "message_sid": message_response.sid,
+                "status": message_response.status,
+                "to": to,
+                "from": self.from_number,
+                "body": message
             }
             
-            await self._send_message(init_message)
-            response = await self._receive_message()
-            
-            if response and "result" in response:
-                self.connected = True
-                return True
-            
-            return False
-            
         except Exception as e:
-            print(f"Failed to connect to MCP server: {e}")
-            return False
+            return {"error": f"Failed to send SMS: {str(e)}"}
     
-    async def send_sms(self, to: str, message: str) -> Dict[str, Any]:
-        """Send SMS via Twilio MCP server"""
-        if not self.connected:
-            await self.connect()
-        
-        if not self.connected:
-            return {"error": "Failed to connect to Twilio MCP server"}
+    def get_account_info(self) -> Dict[str, Any]:
+        """Get Twilio account information"""
+        if not self.client:
+            return {"error": "Twilio client not initialized"}
         
         try:
-            # Call the send_sms tool via MCP
-            tool_call = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": "send_sms",
-                    "arguments": {
-                        "to": to,
-                        "body": message
-                    }
-                }
+            account = self.client.api.accounts(self.account_sid).fetch()
+            return {
+                "account_sid": account.sid,
+                "friendly_name": account.friendly_name,
+                "status": account.status,
+                "type": account.type
             }
-            
-            await self._send_message(tool_call)
-            response = await self._receive_message()
-            
-            if response and "result" in response:
-                return response["result"]
-            else:
-                return {"error": "Failed to send SMS", "details": response}
-                
         except Exception as e:
-            return {"error": f"SMS sending failed: {str(e)}"}
-    
-    async def _send_message(self, message: Dict[str, Any]):
-        """Send message to MCP server"""
-        if self.process and self.process.stdin:
-            message_str = json.dumps(message) + "\n"
-            self.process.stdin.write(message_str.encode())
-            await self.process.stdin.drain()
-    
-    async def _receive_message(self) -> Optional[Dict[str, Any]]:
-        """Receive message from MCP server"""
-        if self.process and self.process.stdout:
-            try:
-                line = await self.process.stdout.readline()
-                if line:
-                    return json.loads(line.decode().strip())
-            except Exception as e:
-                print(f"Error receiving MCP message: {e}")
-        return None
-    
-    async def disconnect(self):
-        """Disconnect from MCP server"""
-        if self.process:
-            self.process.terminate()
-            await self.process.wait()
-            self.connected = False
+            return {"error": f"Failed to get account info: {str(e)}"}
 
-# Global MCP client instance
-twilio_client = TwilioMCPClient()
+# Global Twilio client instance
+twilio_client = TwilioClient()
 
 def call_claude(prompt):
     try:
@@ -239,26 +192,16 @@ def handle_send_message(data):
     
     # Check if recipient is a phone number
     if is_phone_number(recipient):
-        # Format phone number and send SMS via Twilio MCP
+        # Format phone number and send SMS via Twilio
         formatted_phone = format_phone_number(recipient)
         print(f"[CMP] Detected phone number, sending SMS to {formatted_phone}")
         
-        # Run async SMS sending in sync context
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
+        result = twilio_client.send_sms(formatted_phone, message)
         
-        try:
-            result = loop.run_until_complete(twilio_client.send_sms(formatted_phone, message))
-            
-            if "error" in result:
-                return f"Failed to send SMS to {recipient}: {result['error']}"
-            else:
-                return f"SMS sent successfully to {recipient}. Message ID: {result.get('content', {}).get('sid', 'N/A')}"
-                
-        except Exception as e:
-            return f"Error sending SMS to {recipient}: {str(e)}"
-        finally:
-            loop.close()
+        if "error" in result:
+            return f"Failed to send SMS to {recipient}: {result['error']}"
+        else:
+            return f"✅ SMS sent successfully to {recipient}. Message ID: {result.get('message_sid', 'N/A')}"
     else:
         # Regular message (not SMS)
         return f"Message logged for {recipient}: {message}"
@@ -625,7 +568,7 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>Smart AI Agent UI</h1>
-    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</div>
+    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → Twilio SMS</div>
     
     <div class="input-container">
       <div class="input-group">
@@ -635,7 +578,7 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Claude API response will appear here...</div>
+      <div class="response-text" id="response">Ready to help! Try saying something like "Send a text message to +1234567890 saying Hello from AI Agent" or "Create a task to review the presentation".</div>
     </div>
 
     <div class="voice-controls">
@@ -832,25 +775,38 @@ def execute():
 @app.route('/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
+    twilio_status = "configured" if twilio_client.client else "not configured"
+    
     return jsonify({
         "status": "healthy",
-        "twilio_configured": bool(CONFIG["twilio_account_sid"] and CONFIG["twilio_auth_token"]),
-        "claude_configured": bool(CONFIG["claude_api_key"])
+        "twilio_status": twilio_status,
+        "claude_configured": bool(CONFIG["claude_api_key"]),
+        "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set"
     })
 
-# Cleanup on app shutdown
-import atexit
+@app.route('/test_sms', methods=['POST'])
+def test_sms():
+    """Test SMS endpoint"""
+    data = request.json
+    to = data.get('to')
+    message = data.get('message', 'Test message from Flask AI Agent')
+    
+    if not to:
+        return jsonify({"error": "Phone number 'to' is required"}), 400
+    
+    result = twilio_client.send_sms(to, message)
+    return jsonify(result)
 
-def cleanup():
-    """Clean up MCP connection on shutdown"""
-    if twilio_client.connected:
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        loop.run_until_complete(twilio_client.disconnect())
-        loop.close()
-
-atexit.register(cleanup)
+@app.route('/twilio_info', methods=['GET'])
+def twilio_info():
+    """Get Twilio account information"""
+    result = twilio_client.get_account_info()
+    return jsonify(result)
 
 if __name__ == '__main__':
+    print("🚀 Starting Smart AI Agent Flask App")
+    print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
+    print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
+    
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    app.run(host="0.0.0.0", port=port, debug=True)

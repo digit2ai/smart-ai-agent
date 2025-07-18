@@ -389,7 +389,7 @@ HTML_TEMPLATE = """
     
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: linear-gradient(135deg, #667eea 0%, #f9fafb 100%);
       margin: 0;
       padding: 1rem;
       min-height: 100vh;
@@ -700,7 +700,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <div class="container">
-    <h1>🎤 Professional Voice SMS</h1>
+    <h1>Smat Ai Agent</h1>
     <div class="subtitle">Speak naturally - AI makes it professional</div>
     <div class="feature-badge">✨ Auto-Enhanced Messages</div>
     
@@ -783,7 +783,7 @@ HTML_TEMPLATE = """
             
             // Auto-submit after voice input with a delay
             setTimeout(() => {
-              document.getElementById('voiceStatus').textContent = '🤖 Processing with AI...';
+              document.getElementById('voiceStatus').textContent = 'Processing with AI...';
               sendCommand();
             }, 1500);
           }
@@ -817,7 +817,7 @@ HTML_TEMPLATE = """
         };
         
         voiceSupported = true;
-        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak your message';
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
       } else {
         document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
         document.getElementById('micButton').style.display = 'none';
@@ -847,7 +847,7 @@ HTML_TEMPLATE = """
       document.getElementById('command').placeholder = 'Try: "Text John saying hey whats up how are you doing"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak your message';
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
       }
     }
 
@@ -890,7 +890,7 @@ HTML_TEMPLATE = """
         return;
       }
 
-      output.textContent = "🤖 Processing with AI and enhancing message...";
+      output.textContent = "Processing with AI and enhancing message...";
 
       fetch("/execute", {
         method: "POST",

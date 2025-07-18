@@ -1,0 +1,10 @@
+{
+  "name": "smart-ai-agent",
+  "version": "1.0.0",
+  "dependencies": {
+    "@modelcontextprotocol/server-twilio": "latest"
+  },
+  "scripts": {
+    "start": "node index.js"
+  }
+}

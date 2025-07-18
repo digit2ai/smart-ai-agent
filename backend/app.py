@@ -389,7 +389,7 @@ HTML_TEMPLATE = """
     
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #f9fafb 100%);
+      background: linear-gradient(to bottom, #2f2f2f 0%, #f9fafb 100%);
       margin: 0;
       padding: 1rem;
       min-height: 100vh;

@@ -355,7 +355,7 @@ HTML_TEMPLATE = """
     
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: linear-gradient(135deg, #eeeeee 0%, #bbbbbb 100%);
+      background: linear-gradient(135deg, #cccccc 0%, #666666 100%);
       margin: 0;
       padding: 1rem;
       min-height: 100vh;

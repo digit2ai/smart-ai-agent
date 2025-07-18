@@ -1,11 +1,10 @@
-# Enhanced Flask CMP Server with PWA capabilities, Voice Input, and Bilingual Support
+# Flask CMP Server with PWA capabilities and Voice Input for mobile app experience
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
 from datetime import datetime
-import re
 
 app = Flask(__name__)
 CORS(app)
@@ -15,89 +14,27 @@ CONFIG = {
     "claude_api_key": os.getenv("CLAUDE_API_KEY", "")
 }
 
-# Enhanced instruction prompt with bilingual support and business Q&A
 INSTRUCTION_PROMPT = """
-You are an intelligent bilingual assistant that can respond in both English and Spanish. 
-Detect the language of the user's input and respond in the same language.
+You are an intelligent assistant. Respond ONLY with valid JSON using one of the supported actions.
 
-You can handle two types of requests:
+Supported actions:
+- create_task
+- create_appointment
+- send_message
+- log_conversation
 
-1. GENERAL BUSINESS QUESTIONS: For general questions, advice, or information requests, respond with helpful information in a conversational manner. Use this JSON structure:
+Each response must use this structure:
 {
-  "action": "general_response",
-  "response": "Your helpful response here",
-  "language": "en" or "es"
+  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation",
+  "title": "...",               // for tasks or appointments
+  "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
+  "recipient": "Name or contact",    // for send_message
+  "message": "Body of the message",  // for send_message or log
+  "notes": "Optional details or transcript" // for CRM logs
 }
-
-2. SPECIFIC ACTIONS: For requests that require specific actions, use one of these structures:
-
-For tasks:
-{
-  "action": "create_task",
-  "title": "Task title",
-  "due_date": "YYYY-MM-DDTHH:MM:SS" or null,
-  "notes": "Additional details",
-  "language": "en" or "es"
-}
-
-For appointments:
-{
-  "action": "create_appointment", 
-  "title": "Appointment title",
-  "due_date": "YYYY-MM-DDTHH:MM:SS" or null,
-  "notes": "Additional details",
-  "language": "en" or "es"
-}
-
-For messages:
-{
-  "action": "send_message",
-  "recipient": "Name or contact",
-  "message": "Message content",
-  "language": "en" or "es"
-}
-
-For conversation logs:
-{
-  "action": "log_conversation",
-  "notes": "Conversation transcript or summary",
-  "language": "en" or "es"
-}
-
-Examples of general business questions to answer directly:
-- "What is market research?" / "¿Qué es investigación de mercado?"
-- "How do I improve customer service?" / "¿Cómo mejoro el servicio al cliente?"
-- "What are the best marketing strategies?" / "¿Cuáles son las mejores estrategias de marketing?"
-- "How do I write a business plan?" / "¿Cómo escribo un plan de negocios?"
-
-Examples of action requests:
-- "Schedule a meeting with John tomorrow at 2pm" / "Programa una reunión con Juan mañana a las 2pm"
-- "Create a task to review the presentation" / "Crea una tarea para revisar la presentación"
-- "Send a message to Maria about the project" / "Envía un mensaje a María sobre el proyecto"
-
-Always respond with valid JSON only. No extra commentary outside the JSON structure.
+Only include fields relevant to the action.
+Do not add extra commentary.
 """
-
-def detect_language(text):
-    """Simple language detection based on common Spanish words and patterns"""
-    spanish_indicators = [
-        'qué', 'cómo', 'cuál', 'cuáles', 'dónde', 'cuándo', 'por qué', 'para qué',
-        'es', 'son', 'está', 'están', 'soy', 'eres', 'somos', 'fue', 'fueron',
-        'con', 'sin', 'para', 'por', 'de', 'del', 'la', 'las', 'el', 'los',
-        'una', 'unas', 'un', 'unos', 'y', 'o', 'pero', 'si', 'no', 'sí',
-        'muy', 'más', 'menos', 'también', 'tampoco', 'ahora', 'después',
-        'antes', 'siempre', 'nunca', 'aquí', 'allí', 'esto', 'eso', 'ese',
-        'esta', 'esa', 'estos', 'esos', 'estas', 'esas', 'me', 'te', 'se',
-        'nos', 'les', 'le', 'lo', 'la', 'mi', 'tu', 'su', 'nuestro', 'vuestro'
-    ]
-    
-    text_lower = text.lower()
-    spanish_count = sum(1 for word in spanish_indicators if word in text_lower)
-    
-    # Check for Spanish accents
-    spanish_accents = re.findall(r'[áéíóúüñ¿¡]', text_lower)
-    
-    return 'es' if spanish_count >= 2 or len(spanish_accents) > 0 else 'en'
 
 def call_claude(prompt):
     try:
@@ -106,106 +43,48 @@ def call_claude(prompt):
             "anthropic-version": "2023-06-01",
             "content-type": "application/json"
         }
-        
-        # Detect language and add context
-        detected_lang = detect_language(prompt)
-        lang_context = "Respond in Spanish." if detected_lang == 'es' else "Respond in English."
-        
-        full_prompt = f"{INSTRUCTION_PROMPT}\n\n{lang_context}\n\nUser: {prompt}"
+        full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
 
         body = {
             "model": "claude-3-haiku-20240307",
-            "max_tokens": 1500,
+            "max_tokens": 1000,
             "temperature": 0.3,
             "messages": [{"role": "user", "content": full_prompt}]
         }
 
         res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
         response_json = res.json()
-        
         if "content" in response_json:
             raw_text = response_json["content"][0]["text"]
-            # Clean up the response to extract JSON
-            json_match = re.search(r'\{.*\}', raw_text, re.DOTALL)
-            if json_match:
-                parsed = json.loads(json_match.group())
-                return parsed
-            else:
-                return {"error": "Could not parse JSON response from Claude."}
+            parsed = json.loads(raw_text)
+            return parsed
         else:
             return {"error": "Claude response missing content."}
     except Exception as e:
         return {"error": str(e)}
 
-# ----- Enhanced Action Handlers -----
-
-def handle_general_response(data):
-    """Handle general business questions and advice"""
-    response = data.get("response", "I'm here to help!")
-    language = data.get("language", "en")
-    
-    if language == "es":
-        print(f"[AI Assistant] Respuesta general: {response}")
-    else:
-        print(f"[AI Assistant] General response: {response}")
-    
-    return response
+# ----- CMP Action Handlers -----
 
 def handle_create_task(data):
-    language = data.get("language", "en")
-    title = data.get("title", "")
-    due_date = data.get("due_date", "")
-    notes = data.get("notes", "")
-    
-    print(f"[CMP] Creating task: {title}, due: {due_date}")
-    
-    if language == "es":
-        return f"Tarea '{title}' programada para {due_date if due_date else 'fecha por determinar'}."
-    else:
-        return f"Task '{title}' scheduled for {due_date if due_date else 'no specific date'}."
+    print("[CMP] Creating task:", data.get("title"), data.get("due_date"))
+    return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}."
 
 def handle_create_appointment(data):
-    language = data.get("language", "en")
-    title = data.get("title", "")
-    due_date = data.get("due_date", "")
-    notes = data.get("notes", "")
-    
-    print(f"[CMP] Creating appointment: {title}, date: {due_date}")
-    
-    if language == "es":
-        return f"Cita '{title}' programada para {due_date if due_date else 'fecha por determinar'}."
-    else:
-        return f"Appointment '{title}' booked for {due_date if due_date else 'no specific date'}."
+    print("[CMP] Creating appointment:", data.get("title"), data.get("due_date"))
+    return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
 
 def handle_send_message(data):
-    language = data.get("language", "en")
-    recipient = data.get("recipient", "")
-    message = data.get("message", "")
-    
-    print(f"[CMP] Sending message to {recipient}: {message}")
-    
-    if language == "es":
-        return f"Mensaje enviado a {recipient}."
-    else:
-        return f"Message sent to {recipient}."
+    print("[CMP] Sending message to", data.get("recipient"))
+    print("Message:", data.get("message"))
+    return f"Message sent to {data.get('recipient')}."
 
 def handle_log_conversation(data):
-    language = data.get("language", "en")
-    notes = data.get("notes", "")
-    
-    print(f"[CMP] Logging conversation: {notes}")
-    
-    if language == "es":
-        return "Conversación guardada en el registro."
-    else:
-        return "Conversation log saved."
+    print("[CMP] Logging conversation:", data.get("notes"))
+    return "Conversation log saved."
 
 def dispatch_action(parsed):
     action = parsed.get("action")
-    
-    if action == "general_response":
-        return handle_general_response(parsed)
-    elif action == "create_task":
+    if action == "create_task":
         return handle_create_task(parsed)
     elif action == "create_appointment":
         return handle_create_appointment(parsed)
@@ -214,19 +93,15 @@ def dispatch_action(parsed):
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
-        language = parsed.get("language", "en")
-        if language == "es":
-            return f"Acción desconocida: {action}"
-        else:
-            return f"Unknown action: {action}"
+        return f"Unknown action: {action}"
 
 # ----- PWA Manifest -----
 @app.route('/manifest.json')
 def manifest():
     return jsonify({
-        "name": "Smart AI Business Assistant",
-        "short_name": "AI Assistant",
-        "description": "Bilingual AI-powered business assistant with voice input (English/Spanish)",
+        "name": "Smart AI Agent",
+        "short_name": "AI Agent",
+        "description": "AI-powered task and appointment manager with voice input",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f4f6f8",
@@ -239,16 +114,15 @@ def manifest():
                 "purpose": "any maskable"
             }
         ],
-        "categories": ["business", "productivity", "utilities"],
-        "orientation": "portrait",
-        "lang": "en"
+        "categories": ["productivity", "utilities"],
+        "orientation": "portrait"
     })
 
 # ----- Service Worker -----
 @app.route('/sw.js')
 def service_worker():
     return '''
-const CACHE_NAME = 'ai-assistant-v2';
+const CACHE_NAME = 'ai-agent-v1';
 const urlsToCache = [
   '/',
   '/manifest.json'
@@ -274,19 +148,19 @@ self.addEventListener('fetch', event => {
 });
 ''', {'Content-Type': 'application/javascript'}
 
-# ----- Enhanced Mobile-Optimized HTML Template -----
+# ----- Mobile-Optimized HTML Template with Voice Input -----
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Smart AI Business Assistant</title>
+  <title>Smart AI Agent</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-  <meta name="apple-mobile-web-app-title" content="AI Assistant">
+  <meta name="apple-mobile-web-app-title" content="AI Agent">
   <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <style>
     * {
@@ -311,7 +185,7 @@ HTML_TEMPLATE = """
 
     .container {
       width: 100%;
-      max-width: 450px;
+      max-width: 400px;
       display: flex;
       flex-direction: column;
       gap: 1rem;
@@ -330,30 +204,6 @@ HTML_TEMPLATE = """
       color: rgba(255,255,255,0.8);
       text-align: center;
       margin-bottom: 1rem;
-    }
-
-    .language-toggle {
-      display: flex;
-      justify-content: center;
-      gap: 0.5rem;
-      margin-bottom: 1rem;
-    }
-
-    .lang-btn {
-      padding: 8px 16px;
-      border: 2px solid rgba(255,255,255,0.3);
-      border-radius: 20px;
-      background: rgba(255,255,255,0.1);
-      color: rgba(255,255,255,0.8);
-      cursor: pointer;
-      transition: all 0.3s;
-      font-size: 0.9rem;
-    }
-
-    .lang-btn.active {
-      background: rgba(255,255,255,0.3);
-      color: white;
-      border-color: rgba(255,255,255,0.6);
     }
 
     .input-container {
@@ -418,12 +268,12 @@ HTML_TEMPLATE = """
     }
 
     .response-text {
-      font-size: 15px;
-      line-height: 1.6;
+      font-size: 14px;
+      line-height: 1.5;
       white-space: pre-wrap;
       word-wrap: break-word;
-      color: rgba(255,255,255,0.95);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      color: rgba(255,255,255,0.9);
+      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
     }
 
     .voice-controls {
@@ -500,25 +350,6 @@ HTML_TEMPLATE = """
       margin-top: 0.5rem;
     }
 
-    .examples {
-      background: rgba(255,255,255,0.05);
-      border-radius: 12px;
-      padding: 1rem;
-      margin-top: 1rem;
-    }
-
-    .examples h3 {
-      font-size: 1rem;
-      margin: 0 0 0.5rem 0;
-      color: rgba(255,255,255,0.9);
-    }
-
-    .examples p {
-      font-size: 0.8rem;
-      color: rgba(255,255,255,0.7);
-      margin: 0.3rem 0;
-    }
-
     .install-prompt {
       position: fixed;
       bottom: 20px;
@@ -568,23 +399,18 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <div class="container">
-    <h1>🤖 Smart AI Business Assistant</h1>
-    <div class="subtitle">Bilingual AI assistant for business tasks and general questions</div>
-    
-    <div class="language-toggle">
-      <button class="lang-btn active" onclick="setLanguage('en')">🇺🇸 English</button>
-      <button class="lang-btn" onclick="setLanguage('es')">🇪🇸 Español</button>
-    </div>
+    <h1>🤖 Smart AI Agent</h1>
+    <div class="subtitle">AI-powered task and appointment manager with voice input</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="What would you like me to help you with?" />
+        <input type="text" id="command" placeholder="What would you like me to do?" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Ask me about business topics, schedule appointments, create tasks, or send messages. I can respond in English or Spanish!</div>
+      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation". You can also use voice input!</div>
     </div>
 
     <div class="voice-controls">
@@ -593,16 +419,6 @@ HTML_TEMPLATE = """
       </button>
     </div>
     <div class="voice-status" id="voiceStatus"></div>
-
-    <div class="examples">
-      <h3 id="examplesTitle">Examples:</h3>
-      <div id="examplesContent">
-        <p>• "What is digital marketing?" / "¿Qué es el marketing digital?"</p>
-        <p>• "How do I improve customer retention?" / "¿Cómo mejoro la retención de clientes?"</p>
-        <p>• "Schedule a meeting tomorrow at 3pm" / "Programa una reunión mañana a las 3pm"</p>
-        <p>• "Create a task to review quarterly reports" / "Crea una tarea para revisar informes trimestrales"</p>
-      </div>
-    </div>
   </div>
 
   <div class="install-prompt" id="installPrompt">
@@ -616,58 +432,6 @@ HTML_TEMPLATE = """
     let recognition;
     let isRecording = false;
     let voiceSupported = false;
-    let currentLanguage = 'en';
-
-    const translations = {
-      en: {
-        placeholder: "What would you like me to help you with?",
-        ready: "Ready to help! Ask me about business topics, schedule appointments, create tasks, or send messages. I can respond in English or Spanish!",
-        processing: "🤔 Processing...",
-        error: "❌ Error: ",
-        warning: "⚠️ Please enter a command or use voice input.",
-        listening: "🎤 Listening...",
-        heard: "📝 Heard: ",
-        micStatus: "Tap microphone to speak",
-        examplesTitle: "Examples:",
-        send: "Send"
-      },
-      es: {
-        placeholder: "¿En qué puedo ayudarte?",
-        ready: "¡Listo para ayudar! Pregúntame sobre temas de negocios, programa citas, crea tareas, o envía mensajes. ¡Puedo responder en inglés o español!",
-        processing: "🤔 Procesando...",
-        error: "❌ Error: ",
-        warning: "⚠️ Por favor ingresa un comando o usa entrada de voz.",
-        listening: "🎤 Escuchando...",
-        heard: "📝 Escuché: ",
-        micStatus: "Toca el micrófono para hablar",
-        examplesTitle: "Ejemplos:",
-        send: "Enviar"
-      }
-    };
-
-    function setLanguage(lang) {
-      currentLanguage = lang;
-      
-      // Update active language button
-      document.querySelectorAll('.lang-btn').forEach(btn => btn.classList.remove('active'));
-      event.target.classList.add('active');
-      
-      // Update UI text
-      const t = translations[lang];
-      document.getElementById('command').placeholder = t.placeholder;
-      document.getElementById('response').textContent = t.ready;
-      document.getElementById('examplesTitle').textContent = t.examplesTitle;
-      document.querySelector('button[onclick="sendCommand()"]').textContent = t.send;
-      
-      if (voiceSupported) {
-        document.getElementById('voiceStatus').textContent = t.micStatus;
-      }
-      
-      // Update speech recognition language
-      if (recognition) {
-        recognition.lang = lang === 'es' ? 'es-ES' : 'en-US';
-      }
-    }
 
     // Initialize speech recognition
     function initSpeechRecognition() {
@@ -682,13 +446,13 @@ HTML_TEMPLATE = """
         recognition.onstart = function() {
           isRecording = true;
           document.getElementById('micButton').classList.add('recording');
-          document.getElementById('voiceStatus').textContent = translations[currentLanguage].listening;
+          document.getElementById('voiceStatus').textContent = '🎤 Listening...';
         };
         
         recognition.onresult = function(event) {
           const transcript = event.results[0][0].transcript;
           document.getElementById('command').value = transcript;
-          document.getElementById('voiceStatus').textContent = translations[currentLanguage].heard + `"${transcript}"`;
+          document.getElementById('voiceStatus').textContent = `📝 Heard: "${transcript}"`;
           
           // Auto-submit after voice input
           setTimeout(() => {
@@ -698,7 +462,7 @@ HTML_TEMPLATE = """
         
         recognition.onerror = function(event) {
           console.error('Speech recognition error:', event.error);
-          document.getElementById('voiceStatus').textContent = translations[currentLanguage].error + event.error;
+          document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
           stopRecording();
         };
         
@@ -707,7 +471,7 @@ HTML_TEMPLATE = """
         };
         
         voiceSupported = true;
-        document.getElementById('voiceStatus').textContent = translations[currentLanguage].micStatus;
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
       } else {
         document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
         document.getElementById('micButton').style.display = 'none';
@@ -724,7 +488,7 @@ HTML_TEMPLATE = """
           recognition.start();
         } catch (error) {
           console.error('Failed to start speech recognition:', error);
-          document.getElementById('voiceStatus').textContent = translations[currentLanguage].error + 'Failed to start voice input';
+          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input';
         }
       }
     }
@@ -732,9 +496,8 @@ HTML_TEMPLATE = """
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      if (document.getElementById('voiceStatus').textContent.includes('Listening') || 
-          document.getElementById('voiceStatus').textContent.includes('Escuchando')) {
-        document.getElementById('voiceStatus').textContent = translations[currentLanguage].micStatus;
+      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
       }
     }
 
@@ -773,11 +536,11 @@ HTML_TEMPLATE = """
       const userText = input.value.trim();
 
       if (!userText) {
-        output.textContent = translations[currentLanguage].warning;
+        output.textContent = "⚠️ Please enter a command or use voice input.";
         return;
       }
 
-      output.textContent = translations[currentLanguage].processing;
+      output.textContent = "🤔 Processing...";
 
       fetch("/execute", {
         method: "POST",
@@ -786,20 +549,12 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        if (data.claude_output && data.claude_output.action === 'general_response') {
-          // For general responses, show the response directly
-          output.textContent = data.claude_output.response;
-        } else {
-          // For actions, show confirmation + details
-          output.textContent = "✅ " + (data.response || "Done!") + "\n\n📋 Details:\n" + JSON.stringify(data.claude_output, null, 2);
-        }
+        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
-        if (voiceSupported) {
-          document.getElementById('voiceStatus').textContent = translations[currentLanguage].micStatus;
-        }
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak' : '';
       })
       .catch(err => {
-        output.textContent = translations[currentLanguage].error + err.message;
+        output.textContent = "❌ Error: " + err.message;
       });
     }
 
@@ -817,11 +572,8 @@ HTML_TEMPLATE = """
       }, 300);
     });
 
-    // Initialize speech recognition and set default language when page loads
-    window.addEventListener('load', function() {
-      initSpeechRecognition();
-      setLanguage('en'); // Set default language
-    });
+    // Initialize speech recognition when page loads
+    window.addEventListener('load', initSpeechRecognition);
   </script>
 </body>
 </html>

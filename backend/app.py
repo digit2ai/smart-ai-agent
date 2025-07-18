@@ -289,7 +289,7 @@ def manifest():
         "description": "AI-powered task and appointment manager with voice input and SMS",
         "start_url": "/",
         "display": "standalone",
-        "background_color": "#f4f6f8",
+        "background_color": "#f8f9fa",
         "theme_color": "#007bff",
         "icons": [
             {
@@ -347,6 +347,7 @@ HTML_TEMPLATE = """
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
   <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * {
       box-sizing: border-box;
@@ -354,8 +355,8 @@ HTML_TEMPLATE = """
     }
     
     body {
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background-color: #f8f9fa;
       margin: 0;
       padding: 1rem;
       min-height: 100vh;
@@ -363,79 +364,94 @@ HTML_TEMPLATE = """
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      color: white;
+      color: #212529;
       padding-top: env(safe-area-inset-top);
       padding-bottom: env(safe-area-inset-bottom);
     }
 
     .container {
       width: 100%;
-      max-width: 400px;
+      max-width: 600px;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.5rem;
+      margin-top: 2rem;
     }
 
     h1 {
-      font-size: 1.8rem;
+      font-size: 2rem;
       margin: 0;
       text-align: center;
-      font-weight: 600;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      font-weight: 700;
+      color: #1a1a1a;
+      letter-spacing: -0.025em;
     }
 
     .subtitle {
-      font-size: 0.9rem;
-      color: rgba(255,255,255,0.8);
+      font-size: 1rem;
+      color: #6c757d;
       text-align: center;
-      margin-bottom: 1rem;
+      margin-bottom: 2rem;
+      font-weight: 400;
+      line-height: 1.5;
     }
 
     .input-container {
-      background: rgba(255,255,255,0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 16px;
-      padding: 1rem;
-      border: 1px solid rgba(255,255,255,0.2);
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid #e9ecef;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     .input-group {
       display: flex;
-      gap: 0.5rem;
+      gap: 0.75rem;
       align-items: center;
     }
 
     input {
       flex: 1;
-      padding: 12px 16px;
+      padding: 14px 18px;
       font-size: 16px;
-      border: none;
-      border-radius: 25px;
-      background: rgba(255,255,255,0.9);
+      border: 2px solid #e9ecef;
+      border-radius: 8px;
+      background: #f8f9fa;
       outline: none;
-      color: #333;
+      color: #212529;
+      font-family: 'Inter', sans-serif;
+      transition: all 0.2s ease;
+    }
+
+    input:focus {
+      border-color: #007bff;
+      background: white;
+      box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
     }
 
     input::placeholder {
-      color: #666;
+      color: #6c757d;
+      font-weight: 400;
     }
 
     button {
-      padding: 12px 16px;
+      padding: 14px 24px;
       font-size: 16px;
+      font-weight: 600;
       border: none;
-      border-radius: 25px;
+      border-radius: 8px;
       background: #007bff;
       color: white;
       cursor: pointer;
-      font-weight: 600;
-      min-width: 60px;
-      transition: all 0.2s;
+      min-width: 80px;
+      transition: all 0.2s ease;
+      font-family: 'Inter', sans-serif;
     }
 
     button:hover {
       background: #0056b3;
       transform: translateY(-1px);
+      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
     }
 
     button:active {
@@ -443,22 +459,23 @@ HTML_TEMPLATE = """
     }
 
     .response-container {
-      background: rgba(255,255,255,0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 16px;
-      padding: 1rem;
-      border: 1px solid rgba(255,255,255,0.2);
-      min-height: 200px;
+      background: white;
+      border-radius: 12px;
+      padding: 1.5rem;
+      border: 1px solid #e9ecef;
+      min-height: 300px;
       flex: 1;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
     }
 
     .response-text {
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       white-space: pre-wrap;
       word-wrap: break-word;
-      color: rgba(255,255,255,0.9);
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+      color: #495057;
+      font-family: 'Inter', monospace;
+      font-weight: 400;
     }
 
     .voice-controls {
@@ -470,30 +487,33 @@ HTML_TEMPLATE = """
     }
 
     .mic-button {
-      width: 60px;
-      height: 60px;
+      width: 64px;
+      height: 64px;
       border-radius: 50%;
       background: #dc3545;
       border: none;
       color: white;
       font-size: 24px;
       cursor: pointer;
-      transition: all 0.3s;
+      transition: all 0.3s ease;
       display: flex;
       align-items: center;
       justify-content: center;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
     }
 
     .mic-button:hover {
       background: #c82333;
       transform: scale(1.05);
+      box-shadow: 0 6px 16px rgba(220, 53, 69, 0.4);
     }
 
     .mic-button.recording {
       background: #28a745;
       animation: pulse 1.5s infinite;
+      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
     }
 
     .mic-button.recording::before {
@@ -511,7 +531,7 @@ HTML_TEMPLATE = """
 
     @keyframes pulse {
       0% { transform: scale(1); }
-      50% { transform: scale(1.1); }
+      50% { transform: scale(1.05); }
       100% { transform: scale(1); }
     }
 
@@ -522,17 +542,19 @@ HTML_TEMPLATE = """
 
     .voice-status {
       font-size: 0.9rem;
-      color: rgba(255,255,255,0.8);
+      color: #6c757d;
       text-align: center;
-      margin-top: 0.5rem;
-      min-height: 20px;
+      margin-top: 0.75rem;
+      min-height: 22px;
+      font-weight: 500;
     }
 
     .voice-not-supported {
       color: #ffc107;
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       text-align: center;
       margin-top: 0.5rem;
+      font-weight: 500;
     }
 
     .install-prompt {
@@ -542,60 +564,78 @@ HTML_TEMPLATE = """
       right: 20px;
       background: #007bff;
       color: white;
-      padding: 12px 16px;
+      padding: 16px 20px;
       border-radius: 12px;
       display: none;
       align-items: center;
       justify-content: space-between;
       z-index: 1000;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+      box-shadow: 0 8px 24px rgba(0, 123, 255, 0.3);
+      font-weight: 500;
     }
 
     .install-prompt button {
       background: rgba(255,255,255,0.2);
       border: none;
       color: white;
-      padding: 8px 12px;
+      padding: 10px 16px;
       border-radius: 8px;
       font-size: 14px;
       cursor: pointer;
+      font-weight: 500;
+      transition: all 0.2s ease;
+    }
+
+    .install-prompt button:hover {
+      background: rgba(255,255,255,0.3);
     }
 
     @media (max-width: 480px) {
       .container {
         max-width: 100%;
+        margin-top: 1rem;
+        gap: 1rem;
       }
       
       body {
-        padding: 0.5rem;
+        padding: 0.75rem;
       }
       
       h1 {
-        font-size: 1.5rem;
+        font-size: 1.75rem;
+      }
+      
+      .subtitle {
+        font-size: 0.9rem;
+        margin-bottom: 1.5rem;
       }
       
       .mic-button {
-        width: 55px;
-        height: 55px;
+        width: 56px;
+        height: 56px;
         font-size: 20px;
+      }
+      
+      .input-container, .response-container {
+        padding: 1.25rem;
       }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🤖 Smart AI Agent</h1>
-    <div class="subtitle">AI-powered task and appointment manager with voice input</div>
+    <h1>Smart AI Agent UI</h1>
+    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="What would you like me to do?" />
+        <input type="text" id="command" placeholder="What would you like the agent to do?" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation". You can also use voice input!</div>
+      <div class="response-text" id="response">Claude API response will appear here...</div>
     </div>
 
     <div class="voice-controls">

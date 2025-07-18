@@ -4,3 +4,9 @@ python-dotenv
 requests
 openai
 anthropic
+gunicorn
+werkzeug
+click
+itsdangerous
+jinja2
+markupsafe

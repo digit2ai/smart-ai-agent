@@ -1,9 +1,13 @@
-# Flask CMP Server with PWA capabilities, Voice Input, and Direct Twilio integration
+# Flask CMP Server with PWA capabilities, Voice Input, Twilio SMS, and Email integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
+import smtplib
+import re
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from typing import Dict, Any, Optional
 
@@ -24,6 +28,12 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
+    # Email configuration
+    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
+    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+    "email_address": os.getenv("EMAIL_ADDRESS", ""),
+    "email_password": os.getenv("EMAIL_PASSWORD", ""),  # Use app password for Gmail
+    "email_name": os.getenv("EMAIL_NAME", "AI Agent"),
 }
 
 INSTRUCTION_PROMPT = """
@@ -32,7 +42,7 @@ You are an intelligent assistant. Respond ONLY with valid JSON using one of the 
 Supported actions:
 - create_task
 - create_appointment
-- send_message (supports SMS via Twilio)
+- send_message (supports SMS via Twilio and Email via SMTP)
 - log_conversation
 
 Each response must use this structure:
@@ -40,19 +50,87 @@ Each response must use this structure:
   "action": "create_task" | "create_appointment" | "send_message" | "log_conversation",
   "title": "...",               // for tasks or appointments
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name or phone number",    // for send_message (can be phone number like +1234567890)
+  "recipient": "Name, phone number, or email address",    // for send_message
   "message": "Body of the message",  // for send_message or log
+  "subject": "Email subject line",   // optional, for email messages
   "notes": "Optional details or transcript" // for CRM logs
 }
 
 For send_message action:
 - If recipient looks like a phone number (starts with + or contains only digits), it will be sent as SMS
+- If recipient looks like an email address (contains @), it will be sent as email
 - Otherwise it will be logged as a regular message
 - Phone numbers should be in E.164 format (e.g., +1234567890)
+- Email addresses should be valid format (e.g., user@example.com)
 
 Only include fields relevant to the action.
 Do not add extra commentary.
 """
+
+class EmailClient:
+    """SMTP Email client"""
+    
+    def __init__(self):
+        self.smtp_server = CONFIG["smtp_server"]
+        self.smtp_port = CONFIG["smtp_port"]
+        self.email_address = CONFIG["email_address"]
+        self.email_password = CONFIG["email_password"]
+        self.email_name = CONFIG["email_name"]
+        
+        if self.email_address and self.email_password:
+            print("✅ Email client configured successfully")
+        else:
+            print("⚠️ Email not configured - missing EMAIL_ADDRESS or EMAIL_PASSWORD")
+    
+    def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
+        """Send email via SMTP"""
+        if not self.email_address or not self.email_password:
+            return {"error": "Email not configured - missing credentials"}
+        
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = f"{self.email_name} <{self.email_address}>"
+            msg['To'] = to
+            msg['Subject'] = subject
+            
+            # Add body to email
+            msg.attach(MIMEText(message, 'plain'))
+            
+            # Gmail SMTP configuration
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()  # Enable security
+            server.login(self.email_address, self.email_password)
+            
+            # Send email
+            text = msg.as_string()
+            server.sendmail(self.email_address, to, text)
+            server.quit()
+            
+            return {
+                "success": True,
+                "to": to,
+                "from": self.email_address,
+                "subject": subject,
+                "body": message
+            }
+            
+        except Exception as e:
+            return {"error": f"Failed to send email: {str(e)}"}
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """Test SMTP connection"""
+        if not self.email_address or not self.email_password:
+            return {"error": "Email not configured"}
+        
+        try:
+            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
+            server.starttls()
+            server.login(self.email_address, self.email_password)
+            server.quit()
+            return {"success": True, "message": "SMTP connection successful"}
+        except Exception as e:
+            return {"error": f"SMTP connection failed: {str(e)}"}
 
 class TwilioClient:
     """Direct Twilio REST API client"""
@@ -116,8 +194,9 @@ class TwilioClient:
         except Exception as e:
             return {"error": f"Failed to get account info: {str(e)}"}
 
-# Global Twilio client instance
+# Global client instances
 twilio_client = TwilioClient()
+email_client = EmailClient()
 
 def call_claude(prompt):
     try:
@@ -159,6 +238,11 @@ def is_phone_number(recipient: str) -> bool:
     
     return False
 
+def is_email_address(recipient: str) -> bool:
+    """Check if recipient looks like an email address"""
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return re.match(email_pattern, recipient.strip()) is not None
+
 def format_phone_number(phone: str) -> str:
     """Format phone number to E.164 format"""
     # Remove all non-digit characters except +
@@ -186,6 +270,7 @@ def handle_create_appointment(data):
 def handle_send_message(data):
     recipient = data.get("recipient", "")
     message = data.get("message", "")
+    subject = data.get("subject", "Message from AI Agent")
     
     print(f"[CMP] Sending message to {recipient}")
     print(f"Message: {message}")
@@ -202,8 +287,20 @@ def handle_send_message(data):
             return f"Failed to send SMS to {recipient}: {result['error']}"
         else:
             return f"✅ SMS sent successfully to {recipient}. Message ID: {result.get('message_sid', 'N/A')}"
+    
+    # Check if recipient is an email address
+    elif is_email_address(recipient):
+        print(f"[CMP] Detected email address, sending email to {recipient}")
+        
+        result = email_client.send_email(recipient, subject, message)
+        
+        if "error" in result:
+            return f"Failed to send email to {recipient}: {result['error']}"
+        else:
+            return f"✅ Email sent successfully to {recipient} with subject '{subject}'"
+    
     else:
-        # Regular message (not SMS)
+        # Regular message (not SMS or email)
         return f"Message logged for {recipient}: {message}"
 
 def handle_log_conversation(data):
@@ -229,7 +326,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with voice input and SMS",
+        "description": "AI-powered task and appointment manager with voice input, SMS, and email",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -568,17 +665,20 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>Smart AI Agent UI</h1>
-    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → Twilio SMS</div>
+    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → Twilio SMS + SMTP Email</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="What would you like the agent to do?" />
+        <input type="text" id="command" placeholder="Send SMS to +1234567890, email to user@example.com, or create tasks..." />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying something like "Send a text message to +1234567890 saying Hello from AI Agent" or "Create a task to review the presentation".</div>
+      <div class="response-text" id="response">Ready to help! Try saying:
+• "Send a text message to +1234567890 saying Hello from AI Agent"
+• "Send an email to user@example.com with subject 'Meeting Update' saying We need to reschedule"
+• "Create a task to review the presentation"</div>
     </div>
 
     <div class="voice-controls">
@@ -776,12 +876,15 @@ def execute():
 def health_check():
     """Health check endpoint"""
     twilio_status = "configured" if twilio_client.client else "not configured"
+    email_status = "configured" if email_client.email_address and email_client.email_password else "not configured"
     
     return jsonify({
         "status": "healthy",
         "twilio_status": twilio_status,
+        "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
-        "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set"
+        "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
+        "email_address": CONFIG["email_address"] if CONFIG["email_address"] else "not set"
     })
 
 @app.route('/test_sms', methods=['POST'])
@@ -789,12 +892,26 @@ def test_sms():
     """Test SMS endpoint"""
     data = request.json
     to = data.get('to')
-    message = data.get('message', 'Test message from Flask AI Agent')
+    message = data.get('message', 'Test SMS from Flask AI Agent')
     
     if not to:
         return jsonify({"error": "Phone number 'to' is required"}), 400
     
     result = twilio_client.send_sms(to, message)
+    return jsonify(result)
+
+@app.route('/test_email', methods=['POST'])
+def test_email():
+    """Test email endpoint"""
+    data = request.json
+    to = data.get('to')
+    subject = data.get('subject', 'Test Email from Flask AI Agent')
+    message = data.get('message', 'This is a test email from your Flask AI Agent application.')
+    
+    if not to:
+        return jsonify({"error": "Email address 'to' is required"}), 400
+    
+    result = email_client.send_email(to, subject, message)
     return jsonify(result)
 
 @app.route('/twilio_info', methods=['GET'])
@@ -803,10 +920,17 @@ def twilio_info():
     result = twilio_client.get_account_info()
     return jsonify(result)
 
+@app.route('/email_test_connection', methods=['GET'])
+def email_test_connection():
+    """Test email SMTP connection"""
+    result = email_client.test_connection()
+    return jsonify(result)
+
 if __name__ == '__main__':
     print("🚀 Starting Smart AI Agent Flask App")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
+    print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

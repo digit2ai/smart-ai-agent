@@ -1,15 +1,12 @@
-# Flask CMP Server with PWA capabilities, Voice Input, Twilio SMS, and Email integration
+# Enhanced Flask CMP Server with Professional Voice SMS Processing
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
-import smtplib
-import re
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
 from datetime import datetime
 from typing import Dict, Any, Optional
+import re
 
 # Import Twilio REST API client
 try:
@@ -28,12 +25,6 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    # Email configuration
-    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
-    "email_address": os.getenv("EMAIL_ADDRESS", ""),
-    "email_password": os.getenv("EMAIL_PASSWORD", ""),  # Use app password for Gmail
-    "email_name": os.getenv("EMAIL_NAME", "AI Agent"),
 }
 
 INSTRUCTION_PROMPT = """
@@ -42,95 +33,51 @@ You are an intelligent assistant. Respond ONLY with valid JSON using one of the 
 Supported actions:
 - create_task
 - create_appointment
-- send_message (supports SMS via Twilio and Email via SMTP)
+- send_message (supports SMS via Twilio)
 - log_conversation
+- enhance_message (new: for making messages professional)
 
 Each response must use this structure:
 {
-  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation",
+  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation" | "enhance_message",
   "title": "...",               // for tasks or appointments
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name, phone number, or email address",    // for send_message
+  "recipient": "Name or phone number",    // for send_message (can be phone number like +1234567890)
   "message": "Body of the message",  // for send_message or log
-  "subject": "Email subject line",   // optional, for email messages
+  "original_message": "...",     // for enhance_message action
+  "enhanced_message": "...",     // for enhance_message action
   "notes": "Optional details or transcript" // for CRM logs
 }
 
 For send_message action:
 - If recipient looks like a phone number (starts with + or contains only digits), it will be sent as SMS
-- If recipient looks like an email address (contains @), it will be sent as email
 - Otherwise it will be logged as a regular message
 - Phone numbers should be in E.164 format (e.g., +1234567890)
-- Email addresses should be valid format (e.g., user@example.com)
+
+For enhance_message action:
+- Fix grammar, spelling, and punctuation
+- Make the tone professional and clear
+- Preserve the original meaning and intent
+- Keep it concise but polished
 
 Only include fields relevant to the action.
 Do not add extra commentary.
 """
 
-class EmailClient:
-    """SMTP Email client"""
-    
-    def __init__(self):
-        self.smtp_server = CONFIG["smtp_server"]
-        self.smtp_port = CONFIG["smtp_port"]
-        self.email_address = CONFIG["email_address"]
-        self.email_password = CONFIG["email_password"]
-        self.email_name = CONFIG["email_name"]
-        
-        if self.email_address and self.email_password:
-            print("✅ Email client configured successfully")
-        else:
-            print("⚠️ Email not configured - missing EMAIL_ADDRESS or EMAIL_PASSWORD")
-    
-    def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
-        """Send email via SMTP"""
-        if not self.email_address or not self.email_password:
-            return {"error": "Email not configured - missing credentials"}
-        
-        try:
-            # Create message
-            msg = MIMEMultipart()
-            msg['From'] = f"{self.email_name} <{self.email_address}>"
-            msg['To'] = to
-            msg['Subject'] = subject
-            
-            # Add body to email
-            msg.attach(MIMEText(message, 'plain'))
-            
-            # Gmail SMTP configuration
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()  # Enable security
-            server.login(self.email_address, self.email_password)
-            
-            # Send email
-            text = msg.as_string()
-            server.sendmail(self.email_address, to, text)
-            server.quit()
-            
-            return {
-                "success": True,
-                "to": to,
-                "from": self.email_address,
-                "subject": subject,
-                "body": message
-            }
-            
-        except Exception as e:
-            return {"error": f"Failed to send email: {str(e)}"}
-    
-    def test_connection(self) -> Dict[str, Any]:
-        """Test SMTP connection"""
-        if not self.email_address or not self.email_password:
-            return {"error": "Email not configured"}
-        
-        try:
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.email_address, self.email_password)
-            server.quit()
-            return {"success": True, "message": "SMTP connection successful"}
-        except Exception as e:
-            return {"error": f"SMTP connection failed: {str(e)}"}
+MESSAGE_ENHANCEMENT_PROMPT = """
+You are a professional communication assistant. Your task is to enhance messages to make them clear, professional, and grammatically correct while preserving the original meaning and intent.
+
+Please take the following message and improve it:
+- Fix any grammar, spelling, or punctuation errors
+- Make the tone professional but friendly
+- Ensure clarity and conciseness
+- Preserve the original meaning completely
+- Keep it appropriate for SMS/text messaging
+
+Original message: "{original_message}"
+
+Respond with ONLY the enhanced message, nothing else.
+"""
 
 class TwilioClient:
     """Direct Twilio REST API client"""
@@ -194,18 +141,22 @@ class TwilioClient:
         except Exception as e:
             return {"error": f"Failed to get account info: {str(e)}"}
 
-# Global client instances
+# Global Twilio client instance
 twilio_client = TwilioClient()
-email_client = EmailClient()
 
-def call_claude(prompt):
+def call_claude(prompt, use_enhancement_prompt=False, original_message=""):
+    """Call Claude API with different prompts based on use case"""
     try:
         headers = {
             "x-api-key": CONFIG["claude_api_key"],
             "anthropic-version": "2023-06-01",
             "content-type": "application/json"
         }
-        full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
+        
+        if use_enhancement_prompt:
+            full_prompt = MESSAGE_ENHANCEMENT_PROMPT.format(original_message=original_message)
+        else:
+            full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
 
         body = {
             "model": "claude-3-haiku-20240307",
@@ -216,14 +167,34 @@ def call_claude(prompt):
 
         res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
         response_json = res.json()
+        
         if "content" in response_json:
             raw_text = response_json["content"][0]["text"]
-            parsed = json.loads(raw_text)
-            return parsed
+            
+            if use_enhancement_prompt:
+                # For message enhancement, return the raw text directly
+                return {"enhanced_message": raw_text.strip()}
+            else:
+                # For regular commands, parse as JSON
+                parsed = json.loads(raw_text)
+                return parsed
         else:
             return {"error": "Claude response missing content."}
     except Exception as e:
         return {"error": str(e)}
+
+def enhance_message_with_claude(message: str) -> str:
+    """Enhance a message using Claude AI"""
+    try:
+        result = call_claude("", use_enhancement_prompt=True, original_message=message)
+        if "enhanced_message" in result:
+            return result["enhanced_message"]
+        else:
+            print(f"Enhancement failed: {result}")
+            return message  # Return original if enhancement fails
+    except Exception as e:
+        print(f"Error enhancing message: {e}")
+        return message  # Return original if enhancement fails
 
 def is_phone_number(recipient: str) -> bool:
     """Check if recipient looks like a phone number"""
@@ -237,11 +208,6 @@ def is_phone_number(recipient: str) -> bool:
         return True
     
     return False
-
-def is_email_address(recipient: str) -> bool:
-    """Check if recipient looks like an email address"""
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(email_pattern, recipient.strip()) is not None
 
 def format_phone_number(phone: str) -> str:
     """Format phone number to E.164 format"""
@@ -257,6 +223,39 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
+def extract_sms_command(text: str) -> Dict[str, str]:
+    """Extract SMS command from voice input using pattern matching"""
+    # Common patterns for SMS commands
+    patterns = [
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        r'text (.+?) saying (.+)',
+        r'message (.+?) saying (.+)',
+        r'send (.+?) the message (.+)',
+        r'tell (.+?) that (.+)',
+        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Clean up common voice recognition artifacts
+            message = message.replace(" period", ".").replace(" comma", ",")
+            message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
+            
+            return {
+                "action": "send_message",
+                "recipient": recipient,
+                "message": message,
+                "original_message": message
+            }
+    
+    return None
+
 # ----- CMP Action Handlers -----
 
 def handle_create_task(data):
@@ -270,38 +269,32 @@ def handle_create_appointment(data):
 def handle_send_message(data):
     recipient = data.get("recipient", "")
     message = data.get("message", "")
-    subject = data.get("subject", "Message from AI Agent")
+    original_message = data.get("original_message", message)
     
     print(f"[CMP] Sending message to {recipient}")
-    print(f"Message: {message}")
     
     # Check if recipient is a phone number
     if is_phone_number(recipient):
-        # Format phone number and send SMS via Twilio
+        # Format phone number
         formatted_phone = format_phone_number(recipient)
-        print(f"[CMP] Detected phone number, sending SMS to {formatted_phone}")
+        print(f"[CMP] Detected phone number, processing SMS to {formatted_phone}")
         
-        result = twilio_client.send_sms(formatted_phone, message)
+        # Enhance the message using Claude AI
+        print(f"[CMP] Original message: {original_message}")
+        enhanced_message = enhance_message_with_claude(original_message)
+        print(f"[CMP] Enhanced message: {enhanced_message}")
+        
+        # Send the enhanced message
+        result = twilio_client.send_sms(formatted_phone, enhanced_message)
         
         if "error" in result:
             return f"Failed to send SMS to {recipient}: {result['error']}"
         else:
-            return f"✅ SMS sent successfully to {recipient}. Message ID: {result.get('message_sid', 'N/A')}"
-    
-    # Check if recipient is an email address
-    elif is_email_address(recipient):
-        print(f"[CMP] Detected email address, sending email to {recipient}")
-        
-        result = email_client.send_email(recipient, subject, message)
-        
-        if "error" in result:
-            return f"Failed to send email to {recipient}: {result['error']}"
-        else:
-            return f"✅ Email sent successfully to {recipient} with subject '{subject}'"
-    
+            return f"✅ Professional SMS sent to {recipient}!\n\nOriginal: {original_message}\nEnhanced: {enhanced_message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
     else:
-        # Regular message (not SMS or email)
-        return f"Message logged for {recipient}: {message}"
+        # Regular message (not SMS)
+        enhanced_message = enhance_message_with_claude(message)
+        return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}"
 
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
@@ -326,7 +319,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with voice input, SMS, and email",
+        "description": "AI-powered task and appointment manager with professional voice SMS",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -373,20 +366,20 @@ self.addEventListener('fetch', event => {
 });
 ''', {'Content-Type': 'application/javascript'}
 
-# ----- Mobile-Optimized HTML Template with Voice Input -----
+# ----- Enhanced Mobile HTML Template -----
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Smart AI Agent</title>
+  <title>Smart AI Agent - Professional Voice SMS</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
-  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS.yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * {
@@ -396,7 +389,7 @@ HTML_TEMPLATE = """
     
     body {
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      background-color: #f8f9fa;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
       margin: 0;
       padding: 1rem;
       min-height: 100vh;
@@ -419,29 +412,44 @@ HTML_TEMPLATE = """
     }
 
     h1 {
-      font-size: 2rem;
+      font-size: 2.2rem;
       margin: 0;
       text-align: center;
       font-weight: 700;
-      color: #1a1a1a;
+      color: white;
       letter-spacing: -0.025em;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.1);
     }
 
     .subtitle {
       font-size: 1rem;
-      color: #6c757d;
+      color: rgba(255,255,255,0.9);
       text-align: center;
       margin-bottom: 2rem;
       font-weight: 400;
       line-height: 1.5;
     }
 
+    .feature-badge {
+      background: rgba(255,255,255,0.2);
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.85rem;
+      font-weight: 500;
+      display: inline-block;
+      margin: 0 auto 1rem;
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+
     .input-container {
-      background: white;
-      border-radius: 12px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
       padding: 1.5rem;
-      border: 1px solid #e9ecef;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+      backdrop-filter: blur(10px);
     }
 
     .input-group {
@@ -452,21 +460,21 @@ HTML_TEMPLATE = """
 
     input {
       flex: 1;
-      padding: 14px 18px;
+      padding: 16px 20px;
       font-size: 16px;
       border: 2px solid #e9ecef;
-      border-radius: 8px;
-      background: #f8f9fa;
+      border-radius: 12px;
+      background: white;
       outline: none;
       color: #212529;
       font-family: 'Inter', sans-serif;
-      transition: all 0.2s ease;
+      transition: all 0.3s ease;
     }
 
     input:focus {
       border-color: #007bff;
-      background: white;
       box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
+      transform: translateY(-1px);
     }
 
     input::placeholder {
@@ -475,23 +483,23 @@ HTML_TEMPLATE = """
     }
 
     button {
-      padding: 14px 24px;
+      padding: 16px 28px;
       font-size: 16px;
       font-weight: 600;
       border: none;
-      border-radius: 8px;
-      background: #007bff;
+      border-radius: 12px;
+      background: linear-gradient(45deg, #007bff, #0056b3);
       color: white;
       cursor: pointer;
-      min-width: 80px;
-      transition: all 0.2s ease;
+      min-width: 90px;
+      transition: all 0.3s ease;
       font-family: 'Inter', sans-serif;
+      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
     }
 
     button:hover {
-      background: #0056b3;
-      transform: translateY(-1px);
-      box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+      transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(0, 123, 255, 0.4);
     }
 
     button:active {
@@ -499,13 +507,14 @@ HTML_TEMPLATE = """
     }
 
     .response-container {
-      background: white;
-      border-radius: 12px;
+      background: rgba(255,255,255,0.95);
+      border-radius: 16px;
       padding: 1.5rem;
-      border: 1px solid #e9ecef;
+      border: 1px solid rgba(255,255,255,0.2);
       min-height: 300px;
       flex: 1;
-      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+      box-shadow: 0 8px 32px rgba(0,0,0,0.1);
+      backdrop-filter: blur(10px);
     }
 
     .response-text {
@@ -514,7 +523,7 @@ HTML_TEMPLATE = """
       white-space: pre-wrap;
       word-wrap: break-word;
       color: #495057;
-      font-family: 'Inter', monospace;
+      font-family: 'Inter', sans-serif;
       font-weight: 400;
     }
 
@@ -527,13 +536,13 @@ HTML_TEMPLATE = """
     }
 
     .mic-button {
-      width: 64px;
-      height: 64px;
+      width: 72px;
+      height: 72px;
       border-radius: 50%;
-      background: #dc3545;
+      background: linear-gradient(45deg, #dc3545, #c82333);
       border: none;
       color: white;
-      font-size: 24px;
+      font-size: 28px;
       cursor: pointer;
       transition: all 0.3s ease;
       display: flex;
@@ -541,19 +550,18 @@ HTML_TEMPLATE = """
       justify-content: center;
       position: relative;
       overflow: hidden;
-      box-shadow: 0 4px 12px rgba(220, 53, 69, 0.3);
+      box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
     }
 
     .mic-button:hover {
-      background: #c82333;
       transform: scale(1.05);
-      box-shadow: 0 6px 16px rgba(220, 53, 69, 0.4);
+      box-shadow: 0 8px 24px rgba(220, 53, 69, 0.5);
     }
 
     .mic-button.recording {
-      background: #28a745;
+      background: linear-gradient(45deg, #28a745, #20c997);
       animation: pulse 1.5s infinite;
-      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.4);
+      box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
     }
 
     .mic-button.recording::before {
@@ -582,11 +590,12 @@ HTML_TEMPLATE = """
 
     .voice-status {
       font-size: 0.9rem;
-      color: #6c757d;
+      color: rgba(255,255,255,0.9);
       text-align: center;
       margin-top: 0.75rem;
       min-height: 22px;
       font-weight: 500;
+      text-shadow: 0 1px 2px rgba(0,0,0,0.1);
     }
 
     .voice-not-supported {
@@ -595,6 +604,33 @@ HTML_TEMPLATE = """
       text-align: center;
       margin-top: 0.5rem;
       font-weight: 500;
+    }
+
+    .examples {
+      background: rgba(255,255,255,0.1);
+      border-radius: 12px;
+      padding: 1rem;
+      margin-top: 1rem;
+      border: 1px solid rgba(255,255,255,0.2);
+    }
+
+    .examples h3 {
+      color: white;
+      margin: 0 0 0.5rem 0;
+      font-size: 1rem;
+      font-weight: 600;
+    }
+
+    .examples ul {
+      color: rgba(255,255,255,0.9);
+      margin: 0;
+      padding-left: 1.2rem;
+      font-size: 0.9rem;
+      line-height: 1.4;
+    }
+
+    .examples li {
+      margin-bottom: 0.3rem;
     }
 
     .install-prompt {
@@ -642,7 +678,7 @@ HTML_TEMPLATE = """
       }
       
       h1 {
-        font-size: 1.75rem;
+        font-size: 1.8rem;
       }
       
       .subtitle {
@@ -651,9 +687,9 @@ HTML_TEMPLATE = """
       }
       
       .mic-button {
-        width: 56px;
-        height: 56px;
-        font-size: 20px;
+        width: 64px;
+        height: 64px;
+        font-size: 24px;
       }
       
       .input-container, .response-container {
@@ -664,21 +700,19 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <div class="container">
-    <h1>Smart AI Agent UI</h1>
-    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → Twilio SMS + SMTP Email</div>
+    <h1>🎤 Professional Voice SMS</h1>
+    <div class="subtitle">Speak naturally - AI makes it professional</div>
+    <div class="feature-badge">✨ Auto-Enhanced Messages</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Send SMS to +1234567890, email to user@example.com, or create tasks..." />
+        <input type="text" id="command" placeholder="Try: 'Text John saying hey whats up how are you doing'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying:
-• "Send a text message to +1234567890 saying Hello from AI Agent"
-• "Send an email to user@example.com with subject 'Meeting Update' saying We need to reschedule"
-• "Create a task to review the presentation"</div>
+      <div class="response-text" id="response">🎯 Ready to send professional messages! Use the microphone button below or type your command.</div>
     </div>
 
     <div class="voice-controls">
@@ -687,6 +721,16 @@ HTML_TEMPLATE = """
       </button>
     </div>
     <div class="voice-status" id="voiceStatus"></div>
+
+    <div class="examples">
+      <h3>💬 Voice Examples:</h3>
+      <ul>
+        <li>"Text mom saying hey mom how are you doing today"</li>
+        <li>"Send a message to +1234567890 saying thanks for the meeting"</li>
+        <li>"Text Sarah saying can we reschedule our meeting"</li>
+        <li>"Send John the message running late be there soon"</li>
+      </ul>
+    </div>
   </div>
 
   <div class="install-prompt" id="installPrompt">
@@ -708,29 +752,63 @@ HTML_TEMPLATE = """
         recognition = new SpeechRecognition();
         
         recognition.continuous = false;
-        recognition.interimResults = false;
+        recognition.interimResults = true;
         recognition.lang = 'en-US';
+        recognition.maxAlternatives = 3;
         
         recognition.onstart = function() {
           isRecording = true;
           document.getElementById('micButton').classList.add('recording');
-          document.getElementById('voiceStatus').textContent = '🎤 Listening...';
+          document.getElementById('voiceStatus').textContent = '🎤 Listening... Speak naturally!';
+          document.getElementById('command').placeholder = 'Listening...';
         };
         
         recognition.onresult = function(event) {
-          const transcript = event.results[0][0].transcript;
-          document.getElementById('command').value = transcript;
-          document.getElementById('voiceStatus').textContent = `📝 Heard: "${transcript}"`;
+          let transcript = '';
+          let isFinal = false;
           
-          // Auto-submit after voice input
-          setTimeout(() => {
-            sendCommand();
-          }, 1000);
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              transcript += event.results[i][0].transcript;
+              isFinal = true;
+            } else {
+              // Show interim results
+              document.getElementById('command').value = event.results[i][0].transcript;
+            }
+          }
+          
+          if (isFinal) {
+            document.getElementById('command').value = transcript.trim();
+            document.getElementById('voiceStatus').textContent = `📝 Captured: "${transcript.trim()}"`;
+            
+            // Auto-submit after voice input with a delay
+            setTimeout(() => {
+              document.getElementById('voiceStatus').textContent = '🤖 Processing with AI...';
+              sendCommand();
+            }, 1500);
+          }
         };
         
         recognition.onerror = function(event) {
           console.error('Speech recognition error:', event.error);
-          document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
+          let errorMessage = '❌ ';
+          switch(event.error) {
+            case 'no-speech':
+              errorMessage += 'No speech detected. Try speaking louder.';
+              break;
+            case 'audio-capture':
+              errorMessage += 'Microphone not accessible.';
+              break;
+            case 'not-allowed':
+              errorMessage += 'Microphone permission denied.';
+              break;
+            case 'network':
+              errorMessage += 'Network error. Check connection.';
+              break;
+            default:
+              errorMessage += `Error: ${event.error}`;
+          }
+          document.getElementById('voiceStatus').textContent = errorMessage;
           stopRecording();
         };
         
@@ -739,7 +817,7 @@ HTML_TEMPLATE = """
         };
         
         voiceSupported = true;
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
+        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak your message';
       } else {
         document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
         document.getElementById('micButton').style.display = 'none';
@@ -753,6 +831,8 @@ HTML_TEMPLATE = """
         recognition.stop();
       } else {
         try {
+          // Clear previous input
+          document.getElementById('command').value = '';
           recognition.start();
         } catch (error) {
           console.error('Failed to start speech recognition:', error);
@@ -764,8 +844,10 @@ HTML_TEMPLATE = """
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
+      document.getElementById('command').placeholder = 'Try: "Text John saying hey whats up how are you doing"';
+      
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
+        document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak your message';
       }
     }
 
@@ -808,7 +890,7 @@ HTML_TEMPLATE = """
         return;
       }
 
-      output.textContent = "🤔 Processing...";
+      output.textContent = "🤖 Processing with AI and enhancing message...";
 
       fetch("/execute", {
         method: "POST",
@@ -817,12 +899,13 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Details:\\n" + JSON.stringify(data.claude_output, null, 2);
+        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
-        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak' : '';
+        document.getElementById('voiceStatus').textContent = voiceSupported ? '🎤 Tap microphone to speak your message' : '';
       })
       .catch(err => {
         output.textContent = "❌ Error: " + err.message;
+        document.getElementById('voiceStatus').textContent = voiceSupported ? '🎤 Tap microphone to speak your message' : '';
       });
     }
 
@@ -842,6 +925,22 @@ HTML_TEMPLATE = """
 
     // Initialize speech recognition when page loads
     window.addEventListener('load', initSpeechRecognition);
+
+    // Request microphone permission on first interaction
+    document.getElementById('micButton').addEventListener('click', function() {
+      if (!voiceSupported) return;
+      
+      // Request microphone permission
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          // Permission granted, stop the stream
+          stream.getTracks().forEach(track => track.stop());
+        })
+        .catch(function(err) {
+          console.log('Microphone permission denied:', err);
+          document.getElementById('voiceStatus').textContent = '❌ Microphone permission required';
+        });
+    });
   </script>
 </body>
 </html>
@@ -858,16 +957,30 @@ def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
-        result = call_claude(prompt)
+        
+        # First, try to extract SMS command using pattern matching
+        sms_command = extract_sms_command(prompt)
+        
+        if sms_command:
+            # Direct SMS processing with enhanced message
+            print(f"[VOICE SMS] Detected SMS command: {sms_command}")
+            dispatch_result = handle_send_message(sms_command)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": sms_command
+            })
+        else:
+            # Fall back to Claude for other commands
+            result = call_claude(prompt)
+            
+            if "error" in result:
+                return jsonify({"response": result["error"]}), 500
 
-        if "error" in result:
-            return jsonify({"response": result["error"]}), 500
-
-        dispatch_result = dispatch_action(result)
-        return jsonify({
-            "response": dispatch_result,
-            "claude_output": result
-        })
+            dispatch_result = dispatch_action(result)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": result
+            })
 
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
@@ -876,15 +989,13 @@ def execute():
 def health_check():
     """Health check endpoint"""
     twilio_status = "configured" if twilio_client.client else "not configured"
-    email_status = "configured" if email_client.email_address and email_client.email_password else "not configured"
     
     return jsonify({
         "status": "healthy",
         "twilio_status": twilio_status,
-        "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
-        "email_address": CONFIG["email_address"] if CONFIG["email_address"] else "not set"
+        "features": ["voice_sms", "message_enhancement", "professional_formatting"]
     })
 
 @app.route('/test_sms', methods=['POST'])
@@ -892,27 +1003,38 @@ def test_sms():
     """Test SMS endpoint"""
     data = request.json
     to = data.get('to')
-    message = data.get('message', 'Test SMS from Flask AI Agent')
+    message = data.get('message', 'Test message from Enhanced Flask AI Agent')
+    enhance = data.get('enhance', True)
     
     if not to:
         return jsonify({"error": "Phone number 'to' is required"}), 400
     
-    result = twilio_client.send_sms(to, message)
+    # Optionally enhance the message
+    if enhance:
+        enhanced_message = enhance_message_with_claude(message)
+        result = twilio_client.send_sms(to, enhanced_message)
+        result['original_message'] = message
+        result['enhanced_message'] = enhanced_message
+    else:
+        result = twilio_client.send_sms(to, message)
+    
     return jsonify(result)
 
-@app.route('/test_email', methods=['POST'])
-def test_email():
-    """Test email endpoint"""
+@app.route('/enhance_message', methods=['POST'])
+def enhance_message_endpoint():
+    """Endpoint to test message enhancement"""
     data = request.json
-    to = data.get('to')
-    subject = data.get('subject', 'Test Email from Flask AI Agent')
-    message = data.get('message', 'This is a test email from your Flask AI Agent application.')
+    message = data.get('message', '')
     
-    if not to:
-        return jsonify({"error": "Email address 'to' is required"}), 400
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
     
-    result = email_client.send_email(to, subject, message)
-    return jsonify(result)
+    enhanced = enhance_message_with_claude(message)
+    
+    return jsonify({
+        "original": message,
+        "enhanced": enhanced
+    })
 
 @app.route('/twilio_info', methods=['GET'])
 def twilio_info():
@@ -920,17 +1042,11 @@ def twilio_info():
     result = twilio_client.get_account_info()
     return jsonify(result)
 
-@app.route('/email_test_connection', methods=['GET'])
-def email_test_connection():
-    """Test email SMTP connection"""
-    result = email_client.test_connection()
-    return jsonify(result)
-
 if __name__ == '__main__':
-    print("🚀 Starting Smart AI Agent Flask App")
+    print("🚀 Starting Enhanced Smart AI Agent Flask App")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
+    print("✨ Features: Professional Voice SMS, Message Enhancement, Auto-formatting")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

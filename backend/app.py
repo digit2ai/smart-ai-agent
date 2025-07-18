@@ -1,4 +1,4 @@
-# Enhanced Flask CMP Server with Professional Voice SMS and Email Processing
+# Enhanced Flask CMP Server with Professional Voice SMS Processing
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -7,11 +7,6 @@ import os
 from datetime import datetime
 from typing import Dict, Any, Optional
 import re
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
-from email.mime.base import MIMEBase
-from email import encoders
 
 # Import Twilio REST API client
 try:
@@ -30,12 +25,6 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    # Email configuration
-    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
-    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
-    "email_username": os.getenv("EMAIL_USERNAME", ""),
-    "email_password": os.getenv("EMAIL_PASSWORD", ""),  # Use app password for Gmail
-    "sender_name": os.getenv("SENDER_NAME", "AI Assistant"),
 }
 
 INSTRUCTION_PROMPT = """
@@ -45,25 +34,18 @@ Supported actions:
 - create_task
 - create_appointment
 - send_message (supports SMS via Twilio)
-- send_email (supports professional email sending)
 - log_conversation
-- enhance_message (for making messages professional)
-- enhance_email (for making emails professional with subject and body)
+- enhance_message (new: for making messages professional)
 
 Each response must use this structure:
 {
-  "action": "create_task" | "create_appointment" | "send_message" | "send_email" | "log_conversation" | "enhance_message" | "enhance_email",
+  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation" | "enhance_message",
   "title": "...",               // for tasks or appointments
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name or phone number or email",    // for send_message/send_email
+  "recipient": "Name or phone number",    // for send_message (can be phone number like +1234567890)
   "message": "Body of the message",  // for send_message or log
-  "email_to": "email@example.com",   // for send_email
-  "email_subject": "Email subject",  // for send_email
-  "email_body": "Email content",     // for send_email
-  "original_message": "...",     // for enhance_message/enhance_email action
+  "original_message": "...",     // for enhance_message action
   "enhanced_message": "...",     // for enhance_message action
-  "enhanced_subject": "...",     // for enhance_email action
-  "enhanced_body": "...",        // for enhance_email action
   "notes": "Optional details or transcript" // for CRM logs
 }
 
@@ -72,23 +54,11 @@ For send_message action:
 - Otherwise it will be logged as a regular message
 - Phone numbers should be in E.164 format (e.g., +1234567890)
 
-For send_email action:
-- Recipient should be a valid email address
-- Include both subject and body
-- Email will be professionally formatted
-
 For enhance_message action:
 - Fix grammar, spelling, and punctuation
 - Make the tone professional and clear
 - Preserve the original meaning and intent
 - Keep it concise but polished
-
-For enhance_email action:
-- Create professional subject line
-- Fix grammar, spelling, and punctuation in body
-- Make the tone professional but friendly
-- Preserve the original meaning and intent
-- Format appropriately for email
 
 Only include fields relevant to the action.
 Do not add extra commentary.
@@ -108,111 +78,6 @@ Original message: "{original_message}"
 
 Respond with ONLY the enhanced message, nothing else.
 """
-
-EMAIL_ENHANCEMENT_PROMPT = """
-You are a professional email communication assistant. Your task is to enhance email content to make it clear, professional, and well-formatted while preserving the original meaning and intent.
-
-Please take the following email content and improve it:
-- Create a clear, professional subject line
-- Fix any grammar, spelling, or punctuation errors
-- Make the tone professional but friendly
-- Ensure proper email structure and formatting
-- Preserve the original meaning completely
-- Make it appropriate for professional email communication
-
-Original email content: "{original_message}"
-
-Respond with ONLY a JSON object in this format:
-{
-  "subject": "Professional subject line",
-  "body": "Enhanced email body with proper formatting"
-}
-"""
-
-class EmailClient:
-    """SMTP Email client for sending professional emails"""
-    
-    def __init__(self):
-        self.smtp_server = CONFIG["smtp_server"]
-        self.smtp_port = CONFIG["smtp_port"]
-        self.username = CONFIG["email_username"]
-        self.password = CONFIG["email_password"]
-        self.sender_name = CONFIG["sender_name"]
-        
-        # Test connection on initialization
-        self.is_configured = bool(self.username and self.password)
-        if self.is_configured:
-            try:
-                self.test_connection()
-                print("✅ Email client initialized successfully")
-            except Exception as e:
-                print(f"❌ Failed to initialize email client: {e}")
-                self.is_configured = False
-        else:
-            print("⚠️ Email not configured - missing credentials")
-    
-    def test_connection(self) -> bool:
-        """Test SMTP connection"""
-        try:
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.username, self.password)
-            server.quit()
-            return True
-        except Exception as e:
-            print(f"Email connection test failed: {e}")
-            return False
-    
-    def send_email(self, to: str, subject: str, body: str, html_body: str = None) -> Dict[str, Any]:
-        """Send email via SMTP"""
-        if not self.is_configured:
-            return {"error": "Email client not configured"}
-        
-        try:
-            # Create message
-            msg = MIMEMultipart('alternative')
-            msg['From'] = f"{self.sender_name} <{self.username}>"
-            msg['To'] = to
-            msg['Subject'] = subject
-            
-            # Add plain text part
-            text_part = MIMEText(body, 'plain')
-            msg.attach(text_part)
-            
-            # Add HTML part if provided
-            if html_body:
-                html_part = MIMEText(html_body, 'html')
-                msg.attach(html_part)
-            
-            # Send email
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()
-            server.login(self.username, self.password)
-            text = msg.as_string()
-            server.sendmail(self.username, to, text)
-            server.quit()
-            
-            return {
-                "success": True,
-                "to": to,
-                "subject": subject,
-                "from": f"{self.sender_name} <{self.username}>",
-                "body": body,
-                "timestamp": datetime.now().isoformat()
-            }
-            
-        except Exception as e:
-            return {"error": f"Failed to send email: {str(e)}"}
-    
-    def get_config_info(self) -> Dict[str, Any]:
-        """Get email configuration information"""
-        return {
-            "configured": self.is_configured,
-            "smtp_server": self.smtp_server,
-            "smtp_port": self.smtp_port,
-            "username": self.username[:5] + "..." if self.username else "not set",
-            "sender_name": self.sender_name
-        }
 
 class TwilioClient:
     """Direct Twilio REST API client"""
@@ -276,11 +141,10 @@ class TwilioClient:
         except Exception as e:
             return {"error": f"Failed to get account info: {str(e)}"}
 
-# Global client instances
+# Global Twilio client instance
 twilio_client = TwilioClient()
-email_client = EmailClient()
 
-def call_claude(prompt, use_enhancement_prompt=False, use_email_prompt=False, original_message=""):
+def call_claude(prompt, use_enhancement_prompt=False, original_message=""):
     """Call Claude API with different prompts based on use case"""
     try:
         headers = {
@@ -289,9 +153,7 @@ def call_claude(prompt, use_enhancement_prompt=False, use_email_prompt=False, or
             "content-type": "application/json"
         }
         
-        if use_email_prompt:
-            full_prompt = EMAIL_ENHANCEMENT_PROMPT.format(original_message=original_message)
-        elif use_enhancement_prompt:
+        if use_enhancement_prompt:
             full_prompt = MESSAGE_ENHANCEMENT_PROMPT.format(original_message=original_message)
         else:
             full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
@@ -309,14 +171,7 @@ def call_claude(prompt, use_enhancement_prompt=False, use_email_prompt=False, or
         if "content" in response_json:
             raw_text = response_json["content"][0]["text"]
             
-            if use_email_prompt:
-                # For email enhancement, parse as JSON
-                try:
-                    parsed = json.loads(raw_text)
-                    return parsed
-                except:
-                    return {"error": "Failed to parse email enhancement response"}
-            elif use_enhancement_prompt:
+            if use_enhancement_prompt:
                 # For message enhancement, return the raw text directly
                 return {"enhanced_message": raw_text.strip()}
             else:
@@ -341,19 +196,6 @@ def enhance_message_with_claude(message: str) -> str:
         print(f"Error enhancing message: {e}")
         return message  # Return original if enhancement fails
 
-def enhance_email_with_claude(message: str) -> Dict[str, str]:
-    """Enhance an email using Claude AI"""
-    try:
-        result = call_claude("", use_email_prompt=True, original_message=message)
-        if "subject" in result and "body" in result:
-            return {"subject": result["subject"], "body": result["body"]}
-        else:
-            print(f"Email enhancement failed: {result}")
-            return {"subject": "Message from AI Assistant", "body": message}
-    except Exception as e:
-        print(f"Error enhancing email: {e}")
-        return {"subject": "Message from AI Assistant", "body": message}
-
 def is_phone_number(recipient: str) -> bool:
     """Check if recipient looks like a phone number"""
     # Remove spaces and common formatting
@@ -366,11 +208,6 @@ def is_phone_number(recipient: str) -> bool:
         return True
     
     return False
-
-def is_email_address(recipient: str) -> bool:
-    """Check if recipient looks like an email address"""
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
-    return re.match(email_pattern, recipient.strip()) is not None
 
 def format_phone_number(phone: str) -> str:
     """Format phone number to E.164 format"""
@@ -386,10 +223,10 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
-def extract_communication_command(text: str) -> Dict[str, str]:
-    """Extract SMS or email command from voice input using pattern matching"""
-    # SMS patterns
-    sms_patterns = [
+def extract_sms_command(text: str) -> Dict[str, str]:
+    """Extract SMS command from voice input using pattern matching"""
+    # Common patterns for SMS commands
+    patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
         r'text (.+?) saying (.+)',
         r'message (.+?) saying (.+)',
@@ -398,50 +235,9 @@ def extract_communication_command(text: str) -> Dict[str, str]:
         r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
     ]
     
-    # Email patterns
-    email_patterns = [
-        r'send (?:an )?email to (.+?) saying (.+)',
-        r'email (.+?) saying (.+)',
-        r'send (.+?) an email saying (.+)',
-        r'email (.+?) that (.+)',
-        r'send (?:an )?email to (.+?) with subject (.+?) saying (.+)',
-        r'email (.+?) about (.+?) saying (.+)',
-    ]
-    
     text_lower = text.lower().strip()
     
-    # Try email patterns first
-    for pattern in email_patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
-        if match:
-            groups = match.groups()
-            if len(groups) == 2:  # Standard email pattern
-                recipient = groups[0].strip()
-                message = groups[1].strip()
-                subject = None
-            elif len(groups) == 3:  # Email with subject
-                recipient = groups[0].strip()
-                subject = groups[1].strip()
-                message = groups[2].strip()
-            
-            # Clean up common voice recognition artifacts
-            message = message.replace(" period", ".").replace(" comma", ",")
-            message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
-            
-            result = {
-                "action": "send_email",
-                "recipient": recipient,
-                "message": message,
-                "original_message": message
-            }
-            
-            if subject:
-                result["subject"] = subject
-            
-            return result
-    
-    # Try SMS patterns
-    for pattern in sms_patterns:
+    for pattern in patterns:
         match = re.search(pattern, text_lower, re.IGNORECASE)
         if match:
             recipient = match.group(1).strip()
@@ -500,52 +296,6 @@ def handle_send_message(data):
         enhanced_message = enhance_message_with_claude(message)
         return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}"
 
-def handle_send_email(data):
-    recipient = data.get("recipient", "")
-    email_to = data.get("email_to", recipient)
-    message = data.get("message", "")
-    original_message = data.get("original_message", message)
-    provided_subject = data.get("email_subject") or data.get("subject")
-    
-    print(f"[CMP] Sending email to {email_to}")
-    
-    # Validate email address
-    if not is_email_address(email_to):
-        return f"❌ Invalid email address: {email_to}"
-    
-    # Enhance the email using Claude AI
-    print(f"[CMP] Original email content: {original_message}")
-    enhanced_email = enhance_email_with_claude(original_message)
-    
-    # Use provided subject or enhanced subject
-    final_subject = provided_subject or enhanced_email["subject"]
-    final_body = enhanced_email["body"]
-    
-    print(f"[CMP] Enhanced email - Subject: {final_subject}")
-    print(f"[CMP] Enhanced email - Body: {final_body}")
-    
-    # Create HTML version of the email
-    html_body = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-            {final_body.replace('\n', '<br>')}
-            <br><br>
-            <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-            <p style="font-size: 12px; color: #888;">
-                Sent via AI Assistant
-            </p>
-        </body>
-    </html>
-    """
-    
-    # Send the enhanced email
-    result = email_client.send_email(email_to, final_subject, final_body, html_body)
-    
-    if "error" in result:
-        return f"Failed to send email to {email_to}: {result['error']}"
-    else:
-        return f"✅ Professional email sent to {email_to}!\n\nSubject: {final_subject}\n\nOriginal: {original_message}\nEnhanced: {final_body}\n\nSent at: {result.get('timestamp', 'N/A')}"
-
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
     return "Conversation log saved."
@@ -558,8 +308,6 @@ def dispatch_action(parsed):
         return handle_create_appointment(parsed)
     elif action == "send_message":
         return handle_send_message(parsed)
-    elif action == "send_email":
-        return handle_send_email(parsed)
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
@@ -569,9 +317,9 @@ def dispatch_action(parsed):
 @app.route('/manifest.json')
 def manifest():
     return jsonify({
-        "name": "Smart AI Agent - Voice SMS & Email",
+        "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered assistant with professional voice SMS and email capabilities",
+        "description": "AI-powered task and appointment manager with professional voice SMS",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -592,7 +340,7 @@ def manifest():
 @app.route('/sw.js')
 def service_worker():
     return '''
-const CACHE_NAME = 'ai-agent-v2';
+const CACHE_NAME = 'ai-agent-v1';
 const urlsToCache = [
   '/',
   '/manifest.json'
@@ -625,13 +373,13 @@ HTML_TEMPLATE = """
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Smart AI Agent - Voice SMS & Email</title>
+  <title>Smart AI Agent - Professional Voice SMS</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
-  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS.yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * {
@@ -693,14 +441,6 @@ HTML_TEMPLATE = """
       margin: 0 auto 1rem;
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255,255,255,0.3);
-    }
-
-    .feature-badges {
-      display: flex;
-      gap: 0.5rem;
-      justify-content: center;
-      flex-wrap: wrap;
-      margin-bottom: 1.5rem;
     }
 
     .input-container {
@@ -955,34 +695,24 @@ HTML_TEMPLATE = """
       .input-container, .response-container {
         padding: 1.25rem;
       }
-      
-      .feature-badges {
-        flex-direction: column;
-        align-items: center;
-      }
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🎤📧 Voice SMS & Email</h1>
+    <h1>🎤 Professional Voice SMS</h1>
     <div class="subtitle">Speak naturally - AI makes it professional</div>
-    
-    <div class="feature-badges">
-      <div class="feature-badge">📱 SMS Messages</div>
-      <div class="feature-badge">📧 Email Support</div>
-      <div class="feature-badge">✨ Auto-Enhanced</div>
-    </div>
+    <div class="feature-badge">✨ Auto-Enhanced Messages</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Email john@email.com saying hey how are you doing'" />
+        <input type="text" id="command" placeholder="Try: 'Text John saying hey whats up how are you doing'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages and emails! Use the microphone button below or type your command.</div>
+      <div class="response-text" id="response">🎯 Ready to send professional messages! Use the microphone button below or type your command.</div>
     </div>
 
     <div class="voice-controls">
@@ -993,18 +723,12 @@ HTML_TEMPLATE = """
     <div class="voice-status" id="voiceStatus"></div>
 
     <div class="examples">
-      <h3>💬 SMS Examples:</h3>
+      <h3>💬 Voice Examples:</h3>
       <ul>
         <li>"Text mom saying hey mom how are you doing today"</li>
         <li>"Send a message to +1234567890 saying thanks for the meeting"</li>
         <li>"Text Sarah saying can we reschedule our meeting"</li>
-      </ul>
-      
-      <h3>📧 Email Examples:</h3>
-      <ul>
-        <li>"Email john@company.com saying thanks for the great meeting today"</li>
-        <li>"Send an email to sarah@email.com saying can we reschedule our meeting"</li>
-        <li>"Email boss@work.com about project update saying the project is going well"</li>
+        <li>"Send John the message running late be there soon"</li>
       </ul>
     </div>
   </div>
@@ -1120,7 +844,7 @@ HTML_TEMPLATE = """
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Email john@email.com saying hey how are you doing"';
+      document.getElementById('command').placeholder = 'Try: "Text John saying hey whats up how are you doing"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = '🎤 Tap microphone to speak your message';
@@ -1234,21 +958,16 @@ def execute():
         data = request.json
         prompt = data.get("text", "")
         
-        # First, try to extract SMS or email command using pattern matching
-        communication_command = extract_communication_command(prompt)
+        # First, try to extract SMS command using pattern matching
+        sms_command = extract_sms_command(prompt)
         
-        if communication_command:
-            # Direct processing with enhanced message/email
-            print(f"[VOICE COMM] Detected command: {communication_command}")
-            
-            if communication_command["action"] == "send_email":
-                dispatch_result = handle_send_email(communication_command)
-            else:
-                dispatch_result = handle_send_message(communication_command)
-                
+        if sms_command:
+            # Direct SMS processing with enhanced message
+            print(f"[VOICE SMS] Detected SMS command: {sms_command}")
+            dispatch_result = handle_send_message(sms_command)
             return jsonify({
                 "response": dispatch_result,
-                "claude_output": communication_command
+                "claude_output": sms_command
             })
         else:
             # Fall back to Claude for other commands
@@ -1270,16 +989,13 @@ def execute():
 def health_check():
     """Health check endpoint"""
     twilio_status = "configured" if twilio_client.client else "not configured"
-    email_status = "configured" if email_client.is_configured else "not configured"
     
     return jsonify({
         "status": "healthy",
         "twilio_status": twilio_status,
-        "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
-        "email_username": CONFIG["email_username"][:5] + "..." if CONFIG["email_username"] else "not set",
-        "features": ["voice_sms", "voice_email", "message_enhancement", "email_enhancement", "professional_formatting"]
+        "features": ["voice_sms", "message_enhancement", "professional_formatting"]
     })
 
 @app.route('/test_sms', methods=['POST'])
@@ -1304,51 +1020,6 @@ def test_sms():
     
     return jsonify(result)
 
-@app.route('/test_email', methods=['POST'])
-def test_email():
-    """Test email endpoint"""
-    data = request.json
-    to = data.get('to')
-    message = data.get('message', 'Test email from Enhanced Flask AI Agent with voice capabilities')
-    subject = data.get('subject')
-    enhance = data.get('enhance', True)
-    
-    if not to:
-        return jsonify({"error": "Email address 'to' is required"}), 400
-    
-    if not is_email_address(to):
-        return jsonify({"error": "Invalid email address"}), 400
-    
-    # Optionally enhance the email
-    if enhance:
-        enhanced_email = enhance_email_with_claude(message)
-        final_subject = subject or enhanced_email["subject"]
-        final_body = enhanced_email["body"]
-        
-        # Create HTML version
-        html_body = f"""
-        <html>
-            <body style="font-family: Arial, sans-serif; line-height: 1.6; color: #333;">
-                {final_body.replace('\n', '<br>')}
-                <br><br>
-                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
-                <p style="font-size: 12px; color: #888;">
-                    Sent via AI Assistant
-                </p>
-            </body>
-        </html>
-        """
-        
-        result = email_client.send_email(to, final_subject, final_body, html_body)
-        result['original_message'] = message
-        result['enhanced_subject'] = final_subject
-        result['enhanced_body'] = final_body
-    else:
-        final_subject = subject or "Message from AI Assistant"
-        result = email_client.send_email(to, final_subject, message)
-    
-    return jsonify(result)
-
 @app.route('/enhance_message', methods=['POST'])
 def enhance_message_endpoint():
     """Endpoint to test message enhancement"""
@@ -1365,41 +1036,17 @@ def enhance_message_endpoint():
         "enhanced": enhanced
     })
 
-@app.route('/enhance_email', methods=['POST'])
-def enhance_email_endpoint():
-    """Endpoint to test email enhancement"""
-    data = request.json
-    message = data.get('message', '')
-    
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-    
-    enhanced = enhance_email_with_claude(message)
-    
-    return jsonify({
-        "original": message,
-        "enhanced_subject": enhanced["subject"],
-        "enhanced_body": enhanced["body"]
-    })
-
 @app.route('/twilio_info', methods=['GET'])
 def twilio_info():
     """Get Twilio account information"""
     result = twilio_client.get_account_info()
     return jsonify(result)
 
-@app.route('/email_info', methods=['GET'])
-def email_info():
-    """Get email configuration information"""
-    result = email_client.get_config_info()
-    return jsonify(result)
-
 if __name__ == '__main__':
     print("🚀 Starting Enhanced Smart AI Agent Flask App")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
-    print(f"📧 Email Status: {'✅ Connected' if email_client.is_configured else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print("✨ Features: Professional Voice SMS, Professional Voice Email, Message Enhancement, Auto-formatting")
+    print("✨ Features: Professional Voice SMS, Message Enhancement, Auto-formatting")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

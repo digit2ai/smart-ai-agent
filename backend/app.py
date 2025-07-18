@@ -1,17 +1,25 @@
-# Flask CMP Server with PWA capabilities and Voice Input for mobile app experience
+# Flask CMP Server with PWA capabilities, Voice Input, and Twilio MCP integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
+import asyncio
+import subprocess
+import tempfile
 from datetime import datetime
+from typing import Dict, Any, Optional
 
 app = Flask(__name__)
 CORS(app)
 
 CONFIG = {
     "provider": "claude",
-    "claude_api_key": os.getenv("CLAUDE_API_KEY", "")
+    "claude_api_key": os.getenv("CLAUDE_API_KEY", ""),
+    "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
+    "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
+    "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
+    "mcp_server_path": os.getenv("MCP_SERVER_PATH", "mcp-server-twilio")
 }
 
 INSTRUCTION_PROMPT = """
@@ -20,7 +28,7 @@ You are an intelligent assistant. Respond ONLY with valid JSON using one of the 
 Supported actions:
 - create_task
 - create_appointment
-- send_message
+- send_message (now supports SMS via Twilio)
 - log_conversation
 
 Each response must use this structure:
@@ -28,13 +36,135 @@ Each response must use this structure:
   "action": "create_task" | "create_appointment" | "send_message" | "log_conversation",
   "title": "...",               // for tasks or appointments
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name or contact",    // for send_message
+  "recipient": "Name or phone number",    // for send_message (can be phone number like +1234567890)
   "message": "Body of the message",  // for send_message or log
   "notes": "Optional details or transcript" // for CRM logs
 }
+
+For send_message action:
+- If recipient looks like a phone number (starts with + or contains only digits), it will be sent as SMS
+- Otherwise it will be logged as a regular message
+- Phone numbers should be in E.164 format (e.g., +1234567890)
+
 Only include fields relevant to the action.
 Do not add extra commentary.
 """
+
+class TwilioMCPClient:
+    """Client for interacting with Twilio MCP server"""
+    
+    def __init__(self):
+        self.process = None
+        self.connected = False
+    
+    async def connect(self):
+        """Start the MCP server process"""
+        try:
+            # Start MCP server as subprocess
+            self.process = await asyncio.create_subprocess_exec(
+                CONFIG["mcp_server_path"],
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                env={
+                    **os.environ,
+                    "TWILIO_ACCOUNT_SID": CONFIG["twilio_account_sid"],
+                    "TWILIO_AUTH_TOKEN": CONFIG["twilio_auth_token"],
+                    "TWILIO_PHONE_NUMBER": CONFIG["twilio_phone_number"]
+                }
+            )
+            
+            # Initialize MCP connection
+            init_message = {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "initialize",
+                "params": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {
+                        "tools": {}
+                    },
+                    "clientInfo": {
+                        "name": "flask-twilio-client",
+                        "version": "1.0.0"
+                    }
+                }
+            }
+            
+            await self._send_message(init_message)
+            response = await self._receive_message()
+            
+            if response and "result" in response:
+                self.connected = True
+                return True
+            
+            return False
+            
+        except Exception as e:
+            print(f"Failed to connect to MCP server: {e}")
+            return False
+    
+    async def send_sms(self, to: str, message: str) -> Dict[str, Any]:
+        """Send SMS via Twilio MCP server"""
+        if not self.connected:
+            await self.connect()
+        
+        if not self.connected:
+            return {"error": "Failed to connect to Twilio MCP server"}
+        
+        try:
+            # Call the send_sms tool via MCP
+            tool_call = {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "tools/call",
+                "params": {
+                    "name": "send_sms",
+                    "arguments": {
+                        "to": to,
+                        "body": message
+                    }
+                }
+            }
+            
+            await self._send_message(tool_call)
+            response = await self._receive_message()
+            
+            if response and "result" in response:
+                return response["result"]
+            else:
+                return {"error": "Failed to send SMS", "details": response}
+                
+        except Exception as e:
+            return {"error": f"SMS sending failed: {str(e)}"}
+    
+    async def _send_message(self, message: Dict[str, Any]):
+        """Send message to MCP server"""
+        if self.process and self.process.stdin:
+            message_str = json.dumps(message) + "\n"
+            self.process.stdin.write(message_str.encode())
+            await self.process.stdin.drain()
+    
+    async def _receive_message(self) -> Optional[Dict[str, Any]]:
+        """Receive message from MCP server"""
+        if self.process and self.process.stdout:
+            try:
+                line = await self.process.stdout.readline()
+                if line:
+                    return json.loads(line.decode().strip())
+            except Exception as e:
+                print(f"Error receiving MCP message: {e}")
+        return None
+    
+    async def disconnect(self):
+        """Disconnect from MCP server"""
+        if self.process:
+            self.process.terminate()
+            await self.process.wait()
+            self.connected = False
+
+# Global MCP client instance
+twilio_client = TwilioMCPClient()
 
 def call_claude(prompt):
     try:
@@ -63,6 +193,33 @@ def call_claude(prompt):
     except Exception as e:
         return {"error": str(e)}
 
+def is_phone_number(recipient: str) -> bool:
+    """Check if recipient looks like a phone number"""
+    # Remove spaces and common formatting
+    clean = recipient.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    
+    # Check if it starts with + or is all digits
+    if clean.startswith("+") and clean[1:].isdigit():
+        return True
+    if clean.isdigit() and len(clean) >= 10:
+        return True
+    
+    return False
+
+def format_phone_number(phone: str) -> str:
+    """Format phone number to E.164 format"""
+    # Remove all non-digit characters except +
+    clean = ''.join(c for c in phone if c.isdigit() or c == '+')
+    
+    # If it doesn't start with +, assume US number
+    if not clean.startswith('+'):
+        if len(clean) == 10:
+            clean = '+1' + clean
+        elif len(clean) == 11 and clean.startswith('1'):
+            clean = '+' + clean
+    
+    return clean
+
 # ----- CMP Action Handlers -----
 
 def handle_create_task(data):
@@ -74,9 +231,37 @@ def handle_create_appointment(data):
     return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
 
 def handle_send_message(data):
-    print("[CMP] Sending message to", data.get("recipient"))
-    print("Message:", data.get("message"))
-    return f"Message sent to {data.get('recipient')}."
+    recipient = data.get("recipient", "")
+    message = data.get("message", "")
+    
+    print(f"[CMP] Sending message to {recipient}")
+    print(f"Message: {message}")
+    
+    # Check if recipient is a phone number
+    if is_phone_number(recipient):
+        # Format phone number and send SMS via Twilio MCP
+        formatted_phone = format_phone_number(recipient)
+        print(f"[CMP] Detected phone number, sending SMS to {formatted_phone}")
+        
+        # Run async SMS sending in sync context
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        
+        try:
+            result = loop.run_until_complete(twilio_client.send_sms(formatted_phone, message))
+            
+            if "error" in result:
+                return f"Failed to send SMS to {recipient}: {result['error']}"
+            else:
+                return f"SMS sent successfully to {recipient}. Message ID: {result.get('content', {}).get('sid', 'N/A')}"
+                
+        except Exception as e:
+            return f"Error sending SMS to {recipient}: {str(e)}"
+        finally:
+            loop.close()
+    else:
+        # Regular message (not SMS)
+        return f"Message logged for {recipient}: {message}"
 
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
@@ -101,7 +286,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with voice input",
+        "description": "AI-powered task and appointment manager with voice input and SMS",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f4f6f8",
@@ -161,7 +346,7 @@ HTML_TEMPLATE = """
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
-  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS.yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <style>
     * {
       box-sizing: border-box;
@@ -204,6 +389,16 @@ HTML_TEMPLATE = """
       color: rgba(255,255,255,0.8);
       text-align: center;
       margin-bottom: 1rem;
+    }
+
+    .features {
+      font-size: 0.8rem;
+      color: rgba(255,255,255,0.7);
+      text-align: center;
+      margin-bottom: 1rem;
+      padding: 8px 12px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 8px;
     }
 
     .input-container {
@@ -400,7 +595,8 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>🤖 Smart AI Agent</h1>
-    <div class="subtitle">AI-powered task and appointment manager with voice input</div>
+    <div class="subtitle">AI-powered task and appointment manager with voice input and SMS</div>
+    <div class="features">✨ Now with SMS messaging via Twilio! Try: "Send SMS to +1234567890 saying Hello there!"</div>
     
     <div class="input-container">
       <div class="input-group">
@@ -410,7 +606,13 @@ HTML_TEMPLATE = """
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying something like "Schedule a meeting with John tomorrow at 2pm" or "Create a task to review the presentation". You can also use voice input!</div>
+      <div class="response-text" id="response">Ready to help! Try saying something like:
+• "Schedule a meeting with John tomorrow at 2pm"
+• "Create a task to review the presentation"
+• "Send SMS to +1234567890 saying Hello there!"
+• "Send a message to John saying the meeting is confirmed"
+
+You can also use voice input!</div>
     </div>
 
     <div class="voice-controls">
@@ -603,6 +805,28 @@ def execute():
 
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint"""
+    return jsonify({
+        "status": "healthy",
+        "twilio_configured": bool(CONFIG["twilio_account_sid"] and CONFIG["twilio_auth_token"]),
+        "claude_configured": bool(CONFIG["claude_api_key"])
+    })
+
+# Cleanup on app shutdown
+import atexit
+
+def cleanup():
+    """Clean up MCP connection on shutdown"""
+    if twilio_client.connected:
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        loop.run_until_complete(twilio_client.disconnect())
+        loop.close()
+
+atexit.register(cleanup)
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))

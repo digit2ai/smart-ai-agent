@@ -373,13 +373,13 @@ HTML_TEMPLATE = """
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Smart AI Agent - Professional Voice SMS</title>
+  <title>Smart AI Agent</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
-  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS.yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
     * {
@@ -590,12 +590,12 @@ HTML_TEMPLATE = """
 
     .voice-status {
       font-size: 0.9rem;
-      color: rgba(255,255,255,0.9);
+      color: #212529;
       text-align: center;
       margin-top: 0.75rem;
       min-height: 22px;
       font-weight: 500;
-      text-shadow: 0 1px 2px rgba(0,0,0,0.1);
+      text-shadow: none;
     }
 
     .voice-not-supported {
@@ -604,33 +604,6 @@ HTML_TEMPLATE = """
       text-align: center;
       margin-top: 0.5rem;
       font-weight: 500;
-    }
-
-    .examples {
-      background: rgba(255,255,255,0.1);
-      border-radius: 12px;
-      padding: 1rem;
-      margin-top: 1rem;
-      border: 1px solid rgba(255,255,255,0.2);
-    }
-
-    .examples h3 {
-      color: white;
-      margin: 0 0 0.5rem 0;
-      font-size: 1rem;
-      font-weight: 600;
-    }
-
-    .examples ul {
-      color: rgba(255,255,255,0.9);
-      margin: 0;
-      padding-left: 1.2rem;
-      font-size: 0.9rem;
-      line-height: 1.4;
-    }
-
-    .examples li {
-      margin-bottom: 0.3rem;
     }
 
     .install-prompt {
@@ -700,7 +673,7 @@ HTML_TEMPLATE = """
 </head>
 <body>
   <div class="container">
-    <h1>Smat Ai Agent</h1>
+    <h1>Smart AI Agent</h1>
     <div class="subtitle">Speak naturally - AI makes it professional</div>
     <div class="feature-badge">✨ Auto-Enhanced Messages</div>
     
@@ -721,16 +694,6 @@ HTML_TEMPLATE = """
       </button>
     </div>
     <div class="voice-status" id="voiceStatus"></div>
-
-    <div class="examples">
-      <h3>💬 Voice Examples:</h3>
-      <ul>
-        <li>"Text mom saying hey mom how are you doing today"</li>
-        <li>"Send a message to +1234567890 saying thanks for the meeting"</li>
-        <li>"Text Sarah saying can we reschedule our meeting"</li>
-        <li>"Send John the message running late be there soon"</li>
-      </ul>
-    </div>
   </div>
 
   <div class="install-prompt" id="installPrompt">
@@ -901,11 +864,11 @@ HTML_TEMPLATE = """
       .then(data => {
         output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
-        document.getElementById('voiceStatus').textContent = voiceSupported ? '🎤 Tap microphone to speak your message' : '';
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
       })
       .catch(err => {
         output.textContent = "❌ Error: " + err.message;
-        document.getElementById('voiceStatus').textContent = voiceSupported ? '🎤 Tap microphone to speak your message' : '';
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
       });
     }
 

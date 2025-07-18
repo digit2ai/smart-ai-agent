@@ -334,7 +334,6 @@ self.addEventListener('fetch', event => {
 ''', {'Content-Type': 'application/javascript'}
 
 # ----- Mobile-Optimized HTML Template with Voice Input -----
-HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -346,67 +345,55 @@ HTML_TEMPLATE = """
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <meta name="apple-mobile-web-app-title" content="AI Agent">
-  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS.yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
+  <link rel="apple-touch-icon" href="data:image/svg+xml;base64,...">
   <style>
     * {
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
     }
-    
+
     body {
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      background: #f4f6f8;
       margin: 0;
-      padding: 1rem;
+      padding: 2rem;
       min-height: 100vh;
       display: flex;
       flex-direction: column;
       align-items: center;
       justify-content: flex-start;
-      color: white;
-      padding-top: env(safe-area-inset-top);
-      padding-bottom: env(safe-area-inset-bottom);
+      color: #222;
     }
 
     .container {
       width: 100%;
-      max-width: 400px;
+      max-width: 600px;
       display: flex;
       flex-direction: column;
-      gap: 1rem;
+      gap: 1.5rem;
     }
 
     h1 {
-      font-size: 1.8rem;
+      font-size: 2rem;
       margin: 0;
       text-align: center;
-      font-weight: 600;
-      text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      font-weight: 700;
+      color: #111;
     }
 
     .subtitle {
-      font-size: 0.9rem;
-      color: rgba(255,255,255,0.8);
+      font-size: 0.95rem;
+      color: #666;
       text-align: center;
-      margin-bottom: 1rem;
-    }
-
-    .features {
-      font-size: 0.8rem;
-      color: rgba(255,255,255,0.7);
-      text-align: center;
-      margin-bottom: 1rem;
-      padding: 8px 12px;
-      background: rgba(255,255,255,0.1);
-      border-radius: 8px;
+      margin-top: -1rem;
     }
 
     .input-container {
-      background: rgba(255,255,255,0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 16px;
+      background: #fff;
+      border-radius: 12px;
       padding: 1rem;
-      border: 1px solid rgba(255,255,255,0.2);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+      border: 1px solid #e0e0e0;
     }
 
     .input-group {
@@ -419,289 +406,70 @@ HTML_TEMPLATE = """
       flex: 1;
       padding: 12px 16px;
       font-size: 16px;
-      border: none;
-      border-radius: 25px;
-      background: rgba(255,255,255,0.9);
+      border: 1px solid #ccc;
+      border-radius: 8px;
+      background: #fff;
       outline: none;
       color: #333;
     }
 
     input::placeholder {
-      color: #666;
+      color: #aaa;
     }
 
     button {
-      padding: 12px 16px;
+      padding: 12px 20px;
       font-size: 16px;
       border: none;
-      border-radius: 25px;
+      border-radius: 8px;
       background: #007bff;
       color: white;
       cursor: pointer;
       font-weight: 600;
-      min-width: 60px;
       transition: all 0.2s;
     }
 
     button:hover {
-      background: #0056b3;
-      transform: translateY(-1px);
-    }
-
-    button:active {
-      transform: translateY(0);
+      background: #0069d9;
     }
 
     .response-container {
-      background: rgba(255,255,255,0.1);
-      backdrop-filter: blur(10px);
-      border-radius: 16px;
+      background: #fff;
+      border-radius: 12px;
       padding: 1rem;
-      border: 1px solid rgba(255,255,255,0.2);
+      border: 1px solid #e0e0e0;
       min-height: 200px;
-      flex: 1;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
     }
 
     .response-text {
       font-size: 14px;
-      line-height: 1.5;
+      line-height: 1.6;
       white-space: pre-wrap;
       word-wrap: break-word;
-      color: rgba(255,255,255,0.9);
-      font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
-    }
-
-    .voice-controls {
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      gap: 1rem;
-      margin-top: 1rem;
-    }
-
-    .mic-button {
-      width: 60px;
-      height: 60px;
-      border-radius: 50%;
-      background: #dc3545;
-      border: none;
-      color: white;
-      font-size: 24px;
-      cursor: pointer;
-      transition: all 0.3s;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      position: relative;
-      overflow: hidden;
-    }
-
-    .mic-button:hover {
-      background: #c82333;
-      transform: scale(1.05);
-    }
-
-    .mic-button.recording {
-      background: #28a745;
-      animation: pulse 1.5s infinite;
-    }
-
-    .mic-button.recording::before {
-      content: '';
-      position: absolute;
-      top: 50%;
-      left: 50%;
-      width: 100%;
-      height: 100%;
-      background: rgba(255,255,255,0.3);
-      border-radius: 50%;
-      transform: translate(-50%, -50%) scale(0);
-      animation: ripple 1.5s infinite;
-    }
-
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.1); }
-      100% { transform: scale(1); }
-    }
-
-    @keyframes ripple {
-      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
-      100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
-    }
-
-    .voice-status {
-      font-size: 0.9rem;
-      color: rgba(255,255,255,0.8);
-      text-align: center;
-      margin-top: 0.5rem;
-      min-height: 20px;
-    }
-
-    .voice-not-supported {
-      color: #ffc107;
-      font-size: 0.8rem;
-      text-align: center;
-      margin-top: 0.5rem;
-    }
-
-    .install-prompt {
-      position: fixed;
-      bottom: 20px;
-      left: 20px;
-      right: 20px;
-      background: #007bff;
-      color: white;
-      padding: 12px 16px;
-      border-radius: 12px;
-      display: none;
-      align-items: center;
-      justify-content: space-between;
-      z-index: 1000;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.3);
-    }
-
-    .install-prompt button {
-      background: rgba(255,255,255,0.2);
-      border: none;
-      color: white;
-      padding: 8px 12px;
-      border-radius: 8px;
-      font-size: 14px;
-      cursor: pointer;
-    }
-
-    @media (max-width: 480px) {
-      .container {
-        max-width: 100%;
-      }
-      
-      body {
-        padding: 0.5rem;
-      }
-      
-      h1 {
-        font-size: 1.5rem;
-      }
-      
-      .mic-button {
-        width: 55px;
-        height: 55px;
-        font-size: 20px;
-      }
+      color: #222;
+      font-family: 'Courier New', Courier, monospace;
     }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>🤖 Smart AI Agent</h1>
-    <div class="subtitle">AI-powered task and appointment manager with voice input and SMS</div>
-    <div class="features">✨ Now with SMS messaging via Twilio! Try: "Send SMS to +1234567890 saying Hello there!"</div>
-    
+    <h1>Smart AI Agent UI</h1>
+    <div class="subtitle">Tech Stack: HTML + JS → Flask API → Claude (Anthropic) → CMP Logic</div>
+
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="What would you like me to do?" />
+        <input type="text" id="command" placeholder="What would you like the agent to do?" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">Ready to help! Try saying something like:
-• "Schedule a meeting with John tomorrow at 2pm"
-• "Create a task to review the presentation"
-• "Send SMS to +1234567890 saying Hello there!"
-• "Send a message to John saying the meeting is confirmed"
-
-You can also use voice input!</div>
+      <div class="response-text" id="response">Claude API response will appear here...</div>
     </div>
-
-    <div class="voice-controls">
-      <button class="mic-button" id="micButton" onclick="toggleVoiceRecording()">
-        🎤
-      </button>
-    </div>
-    <div class="voice-status" id="voiceStatus"></div>
   </div>
-
-  <div class="install-prompt" id="installPrompt">
-    <span>Install this app for the full experience!</span>
-    <button onclick="installApp()">Install</button>
-    <button onclick="hideInstallPrompt()">×</button>
-  </div>
-
-  <script>
-    let deferredPrompt;
-    let recognition;
-    let isRecording = false;
-    let voiceSupported = false;
-
-    // Initialize speech recognition
-    function initSpeechRecognition() {
-      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
-        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-        recognition = new SpeechRecognition();
-        
-        recognition.continuous = false;
-        recognition.interimResults = false;
-        recognition.lang = 'en-US';
-        
-        recognition.onstart = function() {
-          isRecording = true;
-          document.getElementById('micButton').classList.add('recording');
-          document.getElementById('voiceStatus').textContent = '🎤 Listening...';
-        };
-        
-        recognition.onresult = function(event) {
-          const transcript = event.results[0][0].transcript;
-          document.getElementById('command').value = transcript;
-          document.getElementById('voiceStatus').textContent = `📝 Heard: "${transcript}"`;
-          
-          // Auto-submit after voice input
-          setTimeout(() => {
-            sendCommand();
-          }, 1000);
-        };
-        
-        recognition.onerror = function(event) {
-          console.error('Speech recognition error:', event.error);
-          document.getElementById('voiceStatus').textContent = `❌ Error: ${event.error}`;
-          stopRecording();
-        };
-        
-        recognition.onend = function() {
-          stopRecording();
-        };
-        
-        voiceSupported = true;
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
-      } else {
-        document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
-        document.getElementById('micButton').style.display = 'none';
-      }
-    }
-
-    function toggleVoiceRecording() {
-      if (!voiceSupported) return;
-      
-      if (isRecording) {
-        recognition.stop();
-      } else {
-        try {
-          recognition.start();
-        } catch (error) {
-          console.error('Failed to start speech recognition:', error);
-          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input';
-        }
-      }
-    }
-
-    function stopRecording() {
-      isRecording = false;
-      document.getElementById('micButton').classList.remove('recording');
-      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak';
-      }
-    }
+</body>
+</html>
 
     // PWA Install prompt
     window.addEventListener('beforeinstallprompt', (e) => {

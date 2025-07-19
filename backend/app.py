@@ -226,16 +226,22 @@ def format_phone_number(phone: str) -> str:
     return clean
 
 def parse_recipients(recipients_text: str) -> List[str]:
-    """Parse multiple recipients from text"""
+    """Parse recipients - handles both single and multiple recipients better"""
     
     # Clean up the text
     recipients_text = recipients_text.strip()
     
-    # Handle different separators and conjunctions
+    # If it doesn't contain common multi-recipient indicators, treat as single
+    multi_indicators = [' and ', ' & ', ',']
+    if not any(indicator in recipients_text.lower() for indicator in multi_indicators):
+        # Single recipient
+        return [recipients_text]
+    
+    # Handle multiple recipients
     # Replace common conjunctions with commas
-    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text, flags=re.IGNORECASE)
     recipients_text = re.sub(r'\s+&\s+', ', ', recipients_text)
-    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text, flags=re.IGNORECASE)
     
     # Split by comma and clean up
     recipients = [r.strip() for r in recipients_text.split(',')]
@@ -252,35 +258,37 @@ def clean_voice_message(message: str) -> str:
     return message.strip()
 
 def extract_sms_command_multi(text: str) -> Dict[str, Any]:
-    """Enhanced SMS command extraction supporting multiple recipients"""
+    """Enhanced SMS command extraction supporting both single and multiple recipients"""
     
-    # Patterns for multiple recipients
-    multi_patterns = [
-        # "send a text to John and Mary saying hello"
+    # More flexible patterns that work for both single and multiple recipients
+    patterns = [
+        # "send a text to John and Mary saying hello" OR "send a text to John saying hello"
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
-        # "text John, Mary, and Bob saying hello"
+        # "text John, Mary, and Bob saying hello" OR "text John saying hello"  
         r'text (.+?) saying (.+)',
-        # "message John and Mary that we're running late"
+        # "message John and Mary that we're running late" OR "message John that we're running late"
         r'message (.+?) (?:that|saying) (.+)',
-        # "tell John, Mary, and Bob that the meeting moved"
+        # "tell John, Mary, and Bob that the meeting moved" OR "tell John that the meeting moved"
         r'tell (.+?) that (.+)',
+        # Simple pattern: "text John hello there" (for single recipient casual commands)
+        r'text (.+?) (.+)',
     ]
     
     text_lower = text.lower().strip()
     
-    for pattern in multi_patterns:
+    for pattern in patterns:
         match = re.search(pattern, text_lower, re.IGNORECASE)
         if match:
             recipients_text = match.group(1).strip()
             message = match.group(2).strip()
             
-            # Parse multiple recipients
-            recipients = parse_recipients(recipients_text)
-            
             # Clean up voice recognition artifacts
             message = clean_voice_message(message)
             
-            # Check if multiple recipients
+            # Parse recipients - this handles both single and multiple
+            recipients = parse_recipients(recipients_text)
+            
+            # Determine if single or multiple recipients
             if len(recipients) > 1:
                 return {
                     "action": "send_message_multi",
@@ -289,7 +297,7 @@ def extract_sms_command_multi(text: str) -> Dict[str, Any]:
                     "original_message": message
                 }
             else:
-                # Single recipient - use original format
+                # Single recipient - use original single format for backward compatibility
                 return {
                     "action": "send_message",
                     "recipient": recipients[0] if recipients else recipients_text,
@@ -867,18 +875,22 @@ HTML_TEMPLATE = """
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John, Mary, and Bob saying hey everyone how are you doing'" />
+        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Text John and Mary saying hello everyone'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages to multiple recipients! 
+      <div class="response-text" id="response">🎯 Ready to send professional messages! 
 
-Examples you can try:
+Single recipient examples:
+• "Text 8136414177 saying hey how are you"
+• "Send a message to John saying the meeting moved"
+
+Multi-recipient examples:
 • "Text John and Mary saying the meeting moved to 3pm"
 • "Send a message to Mom, Dad, and Sarah saying I'll be home late"
-• "Message +1234567890 and +0987654321 that dinner is ready"
+• "Message 8136414177, 8134210102, and 6566001400 saying hello everyone"
 
 Use the microphone button below or type your command.</div>
     </div>
@@ -1002,7 +1014,7 @@ Use the microphone button below or type your command.</div>
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Text John, Mary, and Bob saying hey everyone how are you doing"';
+      document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Text John and Mary saying hello everyone"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
@@ -1048,7 +1060,7 @@ Use the microphone button below or type your command.</div>
         return;
       }
 
-      output.textContent = "Processing with AI and enhancing message for multiple recipients...";
+      output.textContent = "Processing with AI and enhancing message...";
 
       fetch("/execute", {
         method: "POST",
@@ -1116,23 +1128,39 @@ def execute():
         data = request.json
         prompt = data.get("text", "")
         
-        # First, try to extract multi-recipient SMS command
-        multi_sms_command = extract_sms_command_multi(prompt)
+        print(f"[DEBUG] Processing prompt: {prompt}")
         
-        if multi_sms_command:
-            print(f"[VOICE SMS] Detected command: {multi_sms_command}")
+        # Try to extract SMS command (handles both single and multi-recipient)
+        sms_command = extract_sms_command_multi(prompt)
+        
+        if sms_command:
+            print(f"[VOICE SMS] Detected command: {sms_command}")
             
-            if multi_sms_command["action"] == "send_message_multi":
-                dispatch_result = handle_send_message_multi(multi_sms_command)
+            if sms_command["action"] == "send_message_multi":
+                print(f"[MULTI SMS] Processing multi-recipient: {sms_command['recipients']}")
+                dispatch_result = handle_send_message_multi(sms_command)
             else:
-                dispatch_result = handle_send_message(multi_sms_command)
+                print(f"[SINGLE SMS] Processing single recipient: {sms_command['recipient']}")
+                dispatch_result = handle_send_message(sms_command)
                 
             return jsonify({
                 "response": dispatch_result,
-                "claude_output": multi_sms_command
+                "claude_output": sms_command
+            })
+        
+        # Fall back to original extract_sms_command for backward compatibility
+        sms_command_fallback = extract_sms_command(prompt)
+        
+        if sms_command_fallback:
+            print(f"[VOICE SMS FALLBACK] Detected command: {sms_command_fallback}")
+            dispatch_result = handle_send_message(sms_command_fallback)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": sms_command_fallback
             })
         
         # Fall back to Claude for other commands
+        print("[CLAUDE] No SMS pattern detected, falling back to Claude")
         result = call_claude(prompt)
         
         if "error" in result:
@@ -1145,6 +1173,7 @@ def execute():
         })
 
     except Exception as e:
+        print(f"[ERROR] Exception in execute: {str(e)}")
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
 @app.route('/health', methods=['GET'])
@@ -1227,9 +1256,12 @@ if __name__ == '__main__':
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     print("✨ Features: Multi-Recipient SMS, Professional Voice SMS, Message Enhancement, Auto-formatting")
     print("\n📋 Voice Command Examples:")
-    print("  • 'Text John and Mary saying the meeting moved to 3pm'")
-    print("  • 'Send a message to Mom, Dad, and Sarah saying I'll be home late'")
-    print("  • 'Message +1234567890 and +0987654321 that dinner is ready'")
+    print("  Single recipient:")
+    print("    • 'Text 8136414177 saying hey how are you'")
+    print("    • 'Send a message to John saying the meeting moved'")
+    print("  Multi-recipient:")
+    print("    • 'Text John and Mary saying the meeting moved to 3pm'")
+    print("    • 'Message 8136414177, 8134210102, and 6566001400 saying hello everyone'")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

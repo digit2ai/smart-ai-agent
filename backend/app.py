@@ -226,22 +226,16 @@ def format_phone_number(phone: str) -> str:
     return clean
 
 def parse_recipients(recipients_text: str) -> List[str]:
-    """Parse recipients - handles both single and multiple recipients better"""
+    """Parse multiple recipients from text"""
     
     # Clean up the text
     recipients_text = recipients_text.strip()
     
-    # If it doesn't contain common multi-recipient indicators, treat as single
-    multi_indicators = [' and ', ' & ', ',']
-    if not any(indicator in recipients_text.lower() for indicator in multi_indicators):
-        # Single recipient
-        return [recipients_text]
-    
-    # Handle multiple recipients
+    # Handle different separators and conjunctions
     # Replace common conjunctions with commas
-    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text, flags=re.IGNORECASE)
+    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text)
     recipients_text = re.sub(r'\s+&\s+', ', ', recipients_text)
-    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text, flags=re.IGNORECASE)
+    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text)
     
     # Split by comma and clean up
     recipients = [r.strip() for r in recipients_text.split(',')]
@@ -257,8 +251,56 @@ def clean_voice_message(message: str) -> str:
     message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
     return message.strip()
 
+def extract_sms_command_multi(text: str) -> Dict[str, Any]:
+    """Enhanced SMS command extraction supporting multiple recipients"""
+    
+    # Patterns for multiple recipients
+    multi_patterns = [
+        # "send a text to John and Mary saying hello"
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        # "text John, Mary, and Bob saying hello"
+        r'text (.+?) saying (.+)',
+        # "message John and Mary that we're running late"
+        r'message (.+?) (?:that|saying) (.+)',
+        # "tell John, Mary, and Bob that the meeting moved"
+        r'tell (.+?) that (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in multi_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipients_text = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Parse multiple recipients
+            recipients = parse_recipients(recipients_text)
+            
+            # Clean up voice recognition artifacts
+            message = clean_voice_message(message)
+            
+            # Check if multiple recipients
+            if len(recipients) > 1:
+                return {
+                    "action": "send_message_multi",
+                    "recipients": recipients,
+                    "message": message,
+                    "original_message": message
+                }
+            else:
+                # Single recipient - use original format
+                return {
+                    "action": "send_message",
+                    "recipient": recipients[0] if recipients else recipients_text,
+                    "message": message,
+                    "original_message": message
+                }
+    
+    return None
+
 def extract_sms_command(text: str) -> Dict[str, str]:
-    """Extract SMS command from voice input using pattern matching (ORIGINAL - WORKING VERSION)"""
+    """Extract SMS command from voice input using pattern matching (original single recipient)"""
     # Common patterns for SMS commands
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
@@ -286,54 +328,6 @@ def extract_sms_command(text: str) -> Dict[str, str]:
                 "message": message,
                 "original_message": message
             }
-    
-    return None
-
-def extract_sms_command_multi(text: str) -> Dict[str, Any]:
-    """Enhanced SMS command extraction supporting both single and multiple recipients"""
-    
-    # More flexible patterns that work for both single and multiple recipients
-    patterns = [
-        # "send a text to John and Mary saying hello" OR "send a text to John saying hello"
-        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
-        # "text John, Mary, and Bob saying hello" OR "text John saying hello"  
-        r'text (.+?) saying (.+)',
-        # "message John and Mary that we're running late" OR "message John that we're running late"
-        r'message (.+?) (?:that|saying) (.+)',
-        # "tell John, Mary, and Bob that the meeting moved" OR "tell John that the meeting moved"
-        r'tell (.+?) that (.+)',
-    ]
-    
-    text_lower = text.lower().strip()
-    
-    for pattern in patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
-        if match:
-            recipients_text = match.group(1).strip()
-            message = match.group(2).strip()
-            
-            # Clean up voice recognition artifacts
-            message = clean_voice_message(message)
-            
-            # Parse recipients - this handles both single and multiple
-            recipients = parse_recipients(recipients_text)
-            
-            # Determine if single or multiple recipients
-            if len(recipients) > 1:
-                return {
-                    "action": "send_message_multi",
-                    "recipients": recipients,
-                    "message": message,
-                    "original_message": message
-                }
-            else:
-                # Single recipient - use original single format for backward compatibility
-                return {
-                    "action": "send_message",
-                    "recipient": recipients[0] if recipients else recipients_text,
-                    "message": message,
-                    "original_message": message
-                }
     
     return None
 
@@ -873,22 +867,18 @@ HTML_TEMPLATE = """
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Text John and Mary saying hello everyone'" />
+        <input type="text" id="command" placeholder="Try: 'Text John, Mary, and Bob saying hey everyone how are you doing'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages! 
+      <div class="response-text" id="response">🎯 Ready to send professional messages to multiple recipients! 
 
-Single recipient examples:
-• "Text 8136414177 saying hey how are you"
-• "Send a message to John saying the meeting moved"
-
-Multi-recipient examples:
+Examples you can try:
 • "Text John and Mary saying the meeting moved to 3pm"
 • "Send a message to Mom, Dad, and Sarah saying I'll be home late"
-• "Message 8136414177, 8134210102, and 6566001400 saying hello everyone"
+• "Message +1234567890 and +0987654321 that dinner is ready"
 
 Use the microphone button below or type your command.</div>
     </div>
@@ -908,275 +898,207 @@ Use the microphone button below or type your command.</div>
   </div>
 
   <script>
-let deferredPrompt;
-let recognition;
-let isRecording = false;
-let voiceSupported = false;
+    let deferredPrompt;
+    let recognition;
+    let isRecording = false;
+    let voiceSupported = false;
 
-console.log('🎤 Script loaded, checking speech recognition support...');
+    // Initialize speech recognition
+    function initSpeechRecognition() {
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+        recognition = new SpeechRecognition();
+        
+        recognition.continuous = false;
+        recognition.interimResults = true;
+        recognition.lang = 'en-US';
+        recognition.maxAlternatives = 3;
+        
+        recognition.onstart = function() {
+          isRecording = true;
+          document.getElementById('micButton').classList.add('recording');
+          document.getElementById('voiceStatus').textContent = '🎤 Listening... Speak naturally!';
+          document.getElementById('command').placeholder = 'Listening...';
+        };
+        
+        recognition.onresult = function(event) {
+          let transcript = '';
+          let isFinal = false;
+          
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            if (event.results[i].isFinal) {
+              transcript += event.results[i][0].transcript;
+              isFinal = true;
+            } else {
+              // Show interim results
+              document.getElementById('command').value = event.results[i][0].transcript;
+            }
+          }
+          
+          if (isFinal) {
+            document.getElementById('command').value = transcript.trim();
+            document.getElementById('voiceStatus').textContent = `📝 Captured: "${transcript.trim()}"`;
+            
+            // Auto-submit after voice input with a delay
+            setTimeout(() => {
+              document.getElementById('voiceStatus').textContent = 'Processing with AI...';
+              sendCommand();
+            }, 1500);
+          }
+        };
+        
+        recognition.onerror = function(event) {
+          console.error('Speech recognition error:', event.error);
+          let errorMessage = '❌ ';
+          switch(event.error) {
+            case 'no-speech':
+              errorMessage += 'No speech detected. Try speaking louder.';
+              break;
+            case 'audio-capture':
+              errorMessage += 'Microphone not accessible.';
+              break;
+            case 'not-allowed':
+              errorMessage += 'Microphone permission denied.';
+              break;
+            case 'network':
+              errorMessage += 'Network error. Check connection.';
+              break;
+            default:
+              errorMessage += `Error: ${event.error}`;
+          }
+          document.getElementById('voiceStatus').textContent = errorMessage;
+          stopRecording();
+        };
+        
+        recognition.onend = function() {
+          stopRecording();
+        };
+        
+        voiceSupported = true;
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
+      } else {
+        document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
+        document.getElementById('micButton').style.display = 'none';
+      }
+    }
 
-// Initialize speech recognition with better error handling
-function initSpeechRecognition() {
-  console.log('🔍 Initializing speech recognition...');
-  
-  // Check for speech recognition support with more detailed logging
-  if ('webkitSpeechRecognition' in window) {
-    console.log('✅ webkitSpeechRecognition found');
-    const SpeechRecognition = window.webkitSpeechRecognition;
-    recognition = new SpeechRecognition();
-    voiceSupported = true;
-  } else if ('SpeechRecognition' in window) {
-    console.log('✅ SpeechRecognition found');
-    const SpeechRecognition = window.SpeechRecognition;
-    recognition = new SpeechRecognition();
-    voiceSupported = true;
-  } else {
-    console.log('❌ Speech recognition not supported');
-    document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser. Try Chrome.</div>';
-    document.getElementById('micButton').style.display = 'none';
-    return;
-  }
-
-  if (recognition) {
-    console.log('🔧 Configuring speech recognition...');
-    
-    recognition.continuous = false;
-    recognition.interimResults = true;
-    recognition.lang = 'en-US';
-    recognition.maxAlternatives = 3;
-    
-    recognition.onstart = function() {
-      console.log('🎤 Speech recognition started');
-      isRecording = true;
-      document.getElementById('micButton').classList.add('recording');
-      document.getElementById('voiceStatus').textContent = '🎤 Listening... Speak naturally!';
-      document.getElementById('command').placeholder = 'Listening...';
-    };
-    
-    recognition.onresult = function(event) {
-      console.log('📝 Speech recognition result:', event);
-      let transcript = '';
-      let isFinal = false;
+    function toggleVoiceRecording() {
+      if (!voiceSupported) return;
       
-      for (let i = event.resultIndex; i < event.results.length; i++) {
-        if (event.results[i].isFinal) {
-          transcript += event.results[i][0].transcript;
-          isFinal = true;
-        } else {
-          // Show interim results
-          document.getElementById('command').value = event.results[i][0].transcript;
+      if (isRecording) {
+        recognition.stop();
+      } else {
+        try {
+          // Clear previous input
+          document.getElementById('command').value = '';
+          recognition.start();
+        } catch (error) {
+          console.error('Failed to start speech recognition:', error);
+          document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input';
         }
       }
-      
-      if (isFinal && transcript.trim()) {
-        console.log('✅ Final transcript:', transcript.trim());
-        document.getElementById('command').value = transcript.trim();
-        document.getElementById('voiceStatus').textContent = `📝 Captured: "${transcript.trim()}"`;
-        
-        // Auto-submit after voice input with a delay
-        setTimeout(() => {
-          document.getElementById('voiceStatus').textContent = 'Processing with AI...';
-          sendCommand();
-        }, 1500);
-      }
-    };
-    
-    recognition.onerror = function(event) {
-      console.error('❌ Speech recognition error:', event.error);
-      let errorMessage = '❌ ';
-      switch(event.error) {
-        case 'no-speech':
-          errorMessage += 'No speech detected. Try speaking louder.';
-          break;
-        case 'audio-capture':
-          errorMessage += 'Microphone not accessible.';
-          break;
-        case 'not-allowed':
-          errorMessage += 'Microphone permission denied.';
-          break;
-        case 'network':
-          errorMessage += 'Network error. Check connection.';
-          break;
-        default:
-          errorMessage += `Error: ${event.error}`;
-      }
-      document.getElementById('voiceStatus').textContent = errorMessage;
-      stopRecording();
-    };
-    
-    recognition.onend = function() {
-      console.log('🛑 Speech recognition ended');
-      stopRecording();
-    };
-    
-    document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
-    console.log('✅ Speech recognition initialized successfully');
-  }
-}
-
-function toggleVoiceRecording() {
-  console.log('🎯 Microphone button clicked');
-  console.log('Voice supported:', voiceSupported);
-  console.log('Currently recording:', isRecording);
-  console.log('Recognition object:', recognition);
-  
-  if (!voiceSupported) {
-    console.log('❌ Voice not supported');
-    document.getElementById('voiceStatus').textContent = '❌ Voice not supported in this browser';
-    return;
-  }
-  
-  if (!recognition) {
-    console.log('❌ Recognition object not initialized');
-    document.getElementById('voiceStatus').textContent = '❌ Speech recognition not initialized';
-    return;
-  }
-  
-  if (isRecording) {
-    console.log('🛑 Stopping recording...');
-    try {
-      recognition.stop();
-    } catch (error) {
-      console.error('Error stopping recognition:', error);
     }
-  } else {
-    console.log('▶️ Starting recording...');
-    try {
-      // Clear previous input
-      document.getElementById('command').value = '';
+
+    function stopRecording() {
+      isRecording = false;
+      document.getElementById('micButton').classList.remove('recording');
+      document.getElementById('command').placeholder = 'Try: "Text John, Mary, and Bob saying hey everyone how are you doing"';
       
-      // Request microphone permission first
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices.getUserMedia({ audio: true })
-          .then(function(stream) {
-            console.log('✅ Microphone permission granted');
-            // Stop the stream immediately - we just needed permission
-            stream.getTracks().forEach(track => track.stop());
-            
-            // Now start speech recognition
-            try {
-              recognition.start();
-              console.log('✅ Speech recognition started successfully');
-            } catch (error) {
-              console.error('❌ Error starting speech recognition:', error);
-              document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input: ' + error.message;
-            }
-          })
-          .catch(function(err) {
-            console.error('❌ Microphone permission denied:', err);
-            document.getElementById('voiceStatus').textContent = '❌ Microphone permission required. Please allow microphone access.';
-          });
-      } else {
-        // Fallback - try to start recognition directly
-        console.log('⚠️ getUserMedia not available, trying direct start...');
-        recognition.start();
+      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
+        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
       }
-      
-    } catch (error) {
-      console.error('❌ Failed to start speech recognition:', error);
-      document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input: ' + error.message;
     }
-  }
-}
 
-function stopRecording() {
-  console.log('🛑 Stopping recording...');
-  isRecording = false;
-  document.getElementById('micButton').classList.remove('recording');
-  document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Text John and Mary saying hello everyone"';
-  
-  if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-    document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
-  }
-}
-
-// PWA Install prompt
-window.addEventListener('beforeinstallprompt', (e) => {
-  e.preventDefault();
-  deferredPrompt = e;
-  document.getElementById('installPrompt').style.display = 'flex';
-});
-
-function installApp() {
-  if (deferredPrompt) {
-    deferredPrompt.prompt();
-    deferredPrompt.userChoice.then((choiceResult) => {
-      if (choiceResult.outcome === 'accepted') {
-        console.log('User accepted the install prompt');
-      }
-      deferredPrompt = null;
-      hideInstallPrompt();
+    // PWA Install prompt
+    window.addEventListener('beforeinstallprompt', (e) => {
+      e.preventDefault();
+      deferredPrompt = e;
+      document.getElementById('installPrompt').style.display = 'flex';
     });
-  }
-}
 
-function hideInstallPrompt() {
-  document.getElementById('installPrompt').style.display = 'none';
-}
+    function installApp() {
+      if (deferredPrompt) {
+        deferredPrompt.prompt();
+        deferredPrompt.userChoice.then((choiceResult) => {
+          if (choiceResult.outcome === 'accepted') {
+            console.log('User accepted the install prompt');
+          }
+          deferredPrompt = null;
+          hideInstallPrompt();
+        });
+      }
+    }
 
-// Register service worker
-if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
-}
+    function hideInstallPrompt() {
+      document.getElementById('installPrompt').style.display = 'none';
+    }
 
-function sendCommand() {
-  const input = document.getElementById('command');
-  const output = document.getElementById('response');
-  const userText = input.value.trim();
+    // Register service worker
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js');
+    }
 
-  if (!userText) {
-    output.textContent = "⚠️ Please enter a command or use voice input.";
-    return;
-  }
+    function sendCommand() {
+      const input = document.getElementById('command');
+      const output = document.getElementById('response');
+      const userText = input.value.trim();
 
-  console.log('📤 Sending command:', userText);
-  output.textContent = "Processing with AI and enhancing message...";
+      if (!userText) {
+        output.textContent = "⚠️ Please enter a command or use voice input.";
+        return;
+      }
 
-  fetch("/execute", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ text: userText })
-  })
-  .then(res => res.json())
-  .then(data => {
-    console.log('✅ Response received:', data);
-    output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
-    input.value = "";
-    document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
-  })
-  .catch(err => {
-    console.error('❌ Error sending command:', err);
-    output.textContent = "❌ Error: " + err.message;
-    document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
-  });
-}
+      output.textContent = "Processing with AI and enhancing message for multiple recipients...";
 
-// Allow Enter key to submit
-document.getElementById('command').addEventListener('keypress', function(e) {
-  if (e.key === 'Enter') {
-    sendCommand();
-  }
-});
+      fetch("/execute", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: userText })
+      })
+      .then(res => res.json())
+      .then(data => {
+        output.textContent = "✅ " + (data.response || "Done!") + "\n\n📋 Raw Response:\n" + JSON.stringify(data.claude_output, null, 2);
+        input.value = "";
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
+      })
+      .catch(err => {
+        output.textContent = "❌ Error: " + err.message;
+        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
+      });
+    }
 
-// Handle keyboard on mobile
-document.getElementById('command').addEventListener('focus', function() {
-  setTimeout(() => {
-    this.scrollIntoView({ behavior: 'smooth', block: 'center' });
-  }, 300);
-});
+    // Allow Enter key to submit
+    document.getElementById('command').addEventListener('keypress', function(e) {
+      if (e.key === 'Enter') {
+        sendCommand();
+      }
+    });
 
-// Initialize speech recognition when page loads
-window.addEventListener('load', function() {
-  console.log('📄 Page loaded, initializing speech recognition...');
-  initSpeechRecognition();
-});
+    // Handle keyboard on mobile
+    document.getElementById('command').addEventListener('focus', function() {
+      setTimeout(() => {
+        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }, 300);
+    });
 
-// Debug info
-console.log('🔍 Browser info:');
-console.log('User agent:', navigator.userAgent);
-console.log('webkitSpeechRecognition available:', 'webkitSpeechRecognition' in window);
-console.log('SpeechRecognition available:', 'SpeechRecognition' in window);
-console.log('getUserMedia available:', !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+    // Initialize speech recognition when page loads
+    window.addEventListener('load', initSpeechRecognition);
+
+    // Request microphone permission on first interaction
+    document.getElementById('micButton').addEventListener('click', function() {
+      if (!voiceSupported) return;
+      
+      // Request microphone permission
+      navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          // Permission granted, stop the stream
+          stream.getTracks().forEach(track => track.stop());
+        })
+        .catch(function(err) {
+          console.log('Microphone permission denied:', err);
+          document.getElementById('voiceStatus').textContent = '❌ Microphone permission required';
+        });
+    });
   </script>
 </body>
 </html>
@@ -1194,66 +1116,35 @@ def execute():
         data = request.json
         prompt = data.get("text", "")
         
-        print(f"[DEBUG] ===== NEW REQUEST =====")
-        print(f"[DEBUG] Raw prompt received: '{prompt}'")
-        print(f"[DEBUG] Prompt length: {len(prompt)}")
-        print(f"[DEBUG] Prompt type: {type(prompt)}")
-        
-        # FIRST: Try the original extract_sms_command (this was working before)
-        print(f"[DEBUG] Trying original extract_sms_command...")
-        original_sms_command = extract_sms_command(prompt)
-        
-        if original_sms_command:
-            print(f"[DEBUG] ✅ Original SMS function found match: {original_sms_command}")
-            dispatch_result = handle_send_message(original_sms_command)
-            print(f"[DEBUG] ✅ SMS sent successfully")
-            return jsonify({
-                "response": dispatch_result,
-                "claude_output": original_sms_command
-            })
-        else:
-            print(f"[DEBUG] ❌ Original SMS function found no match")
-        
-        # SECOND: Try the new multi-recipient function
-        print(f"[DEBUG] Trying new extract_sms_command_multi...")
+        # First, try to extract multi-recipient SMS command
         multi_sms_command = extract_sms_command_multi(prompt)
         
         if multi_sms_command:
-            print(f"[DEBUG] ✅ Multi SMS function found match: {multi_sms_command}")
+            print(f"[VOICE SMS] Detected command: {multi_sms_command}")
             
             if multi_sms_command["action"] == "send_message_multi":
-                print(f"[DEBUG] Processing as multi-recipient")
                 dispatch_result = handle_send_message_multi(multi_sms_command)
             else:
-                print(f"[DEBUG] Processing as single recipient")
                 dispatch_result = handle_send_message(multi_sms_command)
                 
             return jsonify({
                 "response": dispatch_result,
                 "claude_output": multi_sms_command
             })
-        else:
-            print(f"[DEBUG] ❌ Multi SMS function found no match")
         
-        # THIRD: Fall back to Claude
-        print(f"[DEBUG] No SMS pattern detected, falling back to Claude")
+        # Fall back to Claude for other commands
         result = call_claude(prompt)
         
         if "error" in result:
-            print(f"[DEBUG] ❌ Claude error: {result}")
             return jsonify({"response": result["error"]}), 500
 
         dispatch_result = dispatch_action(result)
-        print(f"[DEBUG] ✅ Claude processed successfully")
         return jsonify({
             "response": dispatch_result,
             "claude_output": result
         })
 
     except Exception as e:
-        print(f"[ERROR] Exception in execute: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
 
 @app.route('/health', methods=['GET'])
@@ -1330,55 +1221,15 @@ def twilio_info():
     result = twilio_client.get_account_info()
     return jsonify(result)
 
-# Test pattern matching on startup
-def test_patterns():
-    """Test function to see if patterns are working"""
-    test_cases = [
-        "text 8136414177 saying hello",
-        "text john saying hello",
-        "send a text to 8136414177 saying hello",
-        "message 8136414177 that hello",
-        "text 8136414177 hello",
-        "text 8136414177, 8134210102, and 6566001400 saying hello everyone"
-    ]
-    
-    print("\\n🧪 TESTING PATTERN MATCHING:")
-    print("=" * 50)
-    
-    for test in test_cases:
-        print(f"\\nTesting: '{test}'")
-        
-        # Test original function
-        original_result = extract_sms_command(test)
-        print(f"  Original function: {original_result}")
-        
-        # Test new function
-        multi_result = extract_sms_command_multi(test)
-        print(f"  Multi function: {multi_result}")
-        
-        if not original_result and not multi_result:
-            print(f"  ❌ BOTH FAILED!")
-        else:
-            print(f"  ✅ At least one worked")
-    
-    print("=" * 50)
-
 if __name__ == '__main__':
     print("🚀 Starting Enhanced Smart AI Agent Flask App with Multi-Recipient SMS")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     print("✨ Features: Multi-Recipient SMS, Professional Voice SMS, Message Enhancement, Auto-formatting")
-    
-    # Test pattern matching on startup
-    test_patterns()
-    
-    print("\\n📋 Voice Command Examples:")
-    print("  Single recipient:")
-    print("    • 'Text 8136414177 saying hey how are you'")
-    print("    • 'Send a message to John saying the meeting moved'")
-    print("  Multi-recipient:")
-    print("    • 'Text John and Mary saying the meeting moved to 3pm'")
-    print("    • 'Message 8136414177, 8134210102, and 6566001400 saying hello everyone'")
+    print("\n📋 Voice Command Examples:")
+    print("  • 'Text John and Mary saying the meeting moved to 3pm'")
+    print("  • 'Send a message to Mom, Dad, and Sarah saying I'll be home late'")
+    print("  • 'Message +1234567890 and +0987654321 that dinner is ready'")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

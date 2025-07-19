@@ -251,6 +251,38 @@ def clean_voice_message(message: str) -> str:
     message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
     return message.strip()
 
+def extract_sms_command(text: str) -> Dict[str, str]:
+    """Extract SMS command from voice input using pattern matching (ORIGINAL WORKING VERSION)"""
+    # Common patterns for SMS commands
+    patterns = [
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        r'text (.+?) saying (.+)',
+        r'message (.+?) saying (.+)',
+        r'send (.+?) the message (.+)',
+        r'tell (.+?) that (.+)',
+        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Clean up common voice recognition artifacts
+            message = clean_voice_message(message)
+            
+            return {
+                "action": "send_message",
+                "recipient": recipient,
+                "message": message,
+                "original_message": message
+            }
+    
+    return None
+
 def extract_sms_command_multi(text: str) -> Dict[str, Any]:
     """Enhanced SMS command extraction supporting multiple recipients"""
     
@@ -296,38 +328,6 @@ def extract_sms_command_multi(text: str) -> Dict[str, Any]:
                     "message": message,
                     "original_message": message
                 }
-    
-    return None
-
-def extract_sms_command(text: str) -> Dict[str, str]:
-    """Extract SMS command from voice input using pattern matching (original single recipient)"""
-    # Common patterns for SMS commands
-    patterns = [
-        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
-        r'text (.+?) saying (.+)',
-        r'message (.+?) saying (.+)',
-        r'send (.+?) the message (.+)',
-        r'tell (.+?) that (.+)',
-        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
-    ]
-    
-    text_lower = text.lower().strip()
-    
-    for pattern in patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
-        if match:
-            recipient = match.group(1).strip()
-            message = match.group(2).strip()
-            
-            # Clean up common voice recognition artifacts
-            message = clean_voice_message(message)
-            
-            return {
-                "action": "send_message",
-                "recipient": recipient,
-                "message": message,
-                "original_message": message
-            }
     
     return None
 
@@ -867,18 +867,22 @@ HTML_TEMPLATE = """
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John, Mary, and Bob saying hey everyone how are you doing'" />
+        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Text John and Mary saying hello everyone'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages to multiple recipients! 
+      <div class="response-text" id="response">🎯 Ready to send professional messages! 
 
-Examples you can try:
+Single recipient examples:
+• "Text 8136414177 saying hey how are you"
+• "Send a message to John saying the meeting moved"
+
+Multi-recipient examples:
 • "Text John and Mary saying the meeting moved to 3pm"
 • "Send a message to Mom, Dad, and Sarah saying I'll be home late"
-• "Message +1234567890 and +0987654321 that dinner is ready"
+• "Message 8136414177, 8134210102, and 6566001400 saying hello everyone"
 
 Use the microphone button below or type your command.</div>
     </div>
@@ -903,7 +907,7 @@ Use the microphone button below or type your command.</div>
     let isRecording = false;
     let voiceSupported = false;
 
-    // Initialize speech recognition
+    // Initialize speech recognition (ORIGINAL MOBILE-WORKING VERSION)
     function initSpeechRecognition() {
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1002,7 +1006,7 @@ Use the microphone button below or type your command.</div>
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Text John, Mary, and Bob saying hey everyone how are you doing"';
+      document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Text John and Mary saying hello everyone"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
@@ -1048,7 +1052,7 @@ Use the microphone button below or type your command.</div>
         return;
       }
 
-      output.textContent = "Processing with AI and enhancing message for multiple recipients...";
+      output.textContent = "Processing with AI and enhancing message...";
 
       fetch("/execute", {
         method: "POST",
@@ -1057,7 +1061,7 @@ Use the microphone button below or type your command.</div>
       })
       .then(res => res.json())
       .then(data => {
-        output.textContent = "✅ " + (data.response || "Done!") + "\n\n📋 Raw Response:\n" + JSON.stringify(data.claude_output, null, 2);
+        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
         document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
       })
@@ -1110,29 +1114,40 @@ Use the microphone button below or type your command.</div>
 def root():
     return HTML_TEMPLATE
 
+# THIS IS THE KEY FIX: Original execute route order restored
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
         
-        # First, try to extract multi-recipient SMS command
+        # FIRST: Try the original extract_sms_command (this was working on mobile before)
+        sms_command = extract_sms_command(prompt)
+        
+        if sms_command:
+            # Direct SMS processing with enhanced message (ORIGINAL WAY)
+            print(f"[VOICE SMS] Detected SMS command: {sms_command}")
+            dispatch_result = handle_send_message(sms_command)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": sms_command
+            })
+        
+        # SECOND: Only if original fails, try multi-recipient
         multi_sms_command = extract_sms_command_multi(prompt)
         
         if multi_sms_command:
-            print(f"[VOICE SMS] Detected command: {multi_sms_command}")
-            
+            print(f"[VOICE SMS MULTI] Detected multi-recipient SMS: {multi_sms_command}")
             if multi_sms_command["action"] == "send_message_multi":
                 dispatch_result = handle_send_message_multi(multi_sms_command)
             else:
                 dispatch_result = handle_send_message(multi_sms_command)
-                
             return jsonify({
                 "response": dispatch_result,
                 "claude_output": multi_sms_command
             })
         
-        # Fall back to Claude for other commands
+        # THIRD: Fall back to Claude for other commands (ORIGINAL WAY)
         result = call_claude(prompt)
         
         if "error" in result:
@@ -1226,10 +1241,15 @@ if __name__ == '__main__':
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     print("✨ Features: Multi-Recipient SMS, Professional Voice SMS, Message Enhancement, Auto-formatting")
-    print("\n📋 Voice Command Examples:")
-    print("  • 'Text John and Mary saying the meeting moved to 3pm'")
-    print("  • 'Send a message to Mom, Dad, and Sarah saying I'll be home late'")
-    print("  • 'Message +1234567890 and +0987654321 that dinner is ready'")
+    print("🔧 MOBILE FIX: Original single SMS detection restored to work on mobile")
+    print("📱 Execution order: Original SMS → Multi SMS → Claude fallback")
+    print("\\n📋 Voice Command Examples:")
+    print("  Single recipient (mobile-friendly):")
+    print("    • 'Text 8136414177 saying hey how are you'")
+    print("    • 'Send a message to John saying the meeting moved'")
+    print("  Multi-recipient (desktop + mobile):")
+    print("    • 'Text John and Mary saying the meeting moved to 3pm'")
+    print("    • 'Message 8136414177, 8134210102, and 6566001400 saying hello everyone'")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

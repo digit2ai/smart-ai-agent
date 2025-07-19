@@ -1,12 +1,13 @@
-# Enhanced Flask CMP Server with Professional Voice SMS Processing
+# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS Processing
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import re
+import concurrent.futures
 
 # Import Twilio REST API client
 try:
@@ -34,15 +35,17 @@ Supported actions:
 - create_task
 - create_appointment
 - send_message (supports SMS via Twilio)
+- send_message_multi (supports multiple recipients)
 - log_conversation
 - enhance_message (new: for making messages professional)
 
 Each response must use this structure:
 {
-  "action": "create_task" | "create_appointment" | "send_message" | "log_conversation" | "enhance_message",
+  "action": "create_task" | "create_appointment" | "send_message" | "send_message_multi" | "log_conversation" | "enhance_message",
   "title": "...",               // for tasks or appointments
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name or phone number",    // for send_message (can be phone number like +1234567890)
+  "recipient": "Name or phone number",    // for send_message (single recipient)
+  "recipients": ["Name1", "Name2"],       // for send_message_multi (multiple recipients)
   "message": "Body of the message",  // for send_message or log
   "original_message": "...",     // for enhance_message action
   "enhanced_message": "...",     // for enhance_message action
@@ -54,11 +57,10 @@ For send_message action:
 - Otherwise it will be logged as a regular message
 - Phone numbers should be in E.164 format (e.g., +1234567890)
 
-For enhance_message action:
-- Fix grammar, spelling, and punctuation
-- Make the tone professional and clear
-- Preserve the original meaning and intent
-- Keep it concise but polished
+For send_message_multi action:
+- Recipients can be a mix of phone numbers and names
+- All phone numbers will receive SMS, names will be logged
+- Message will be enhanced once and sent to all recipients
 
 Only include fields relevant to the action.
 Do not add extra commentary.
@@ -223,8 +225,82 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
+def parse_recipients(recipients_text: str) -> List[str]:
+    """Parse multiple recipients from text"""
+    
+    # Clean up the text
+    recipients_text = recipients_text.strip()
+    
+    # Handle different separators and conjunctions
+    # Replace common conjunctions with commas
+    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s+&\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text)
+    
+    # Split by comma and clean up
+    recipients = [r.strip() for r in recipients_text.split(',')]
+    
+    # Remove empty strings
+    recipients = [r for r in recipients if r]
+    
+    return recipients
+
+def clean_voice_message(message: str) -> str:
+    """Clean up voice recognition artifacts"""
+    message = message.replace(" period", ".").replace(" comma", ",")
+    message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
+    return message.strip()
+
+def extract_sms_command_multi(text: str) -> Dict[str, Any]:
+    """Enhanced SMS command extraction supporting multiple recipients"""
+    
+    # Patterns for multiple recipients
+    multi_patterns = [
+        # "send a text to John and Mary saying hello"
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        # "text John, Mary, and Bob saying hello"
+        r'text (.+?) saying (.+)',
+        # "message John and Mary that we're running late"
+        r'message (.+?) (?:that|saying) (.+)',
+        # "tell John, Mary, and Bob that the meeting moved"
+        r'tell (.+?) that (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in multi_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipients_text = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Parse multiple recipients
+            recipients = parse_recipients(recipients_text)
+            
+            # Clean up voice recognition artifacts
+            message = clean_voice_message(message)
+            
+            # Check if multiple recipients
+            if len(recipients) > 1:
+                return {
+                    "action": "send_message_multi",
+                    "recipients": recipients,
+                    "message": message,
+                    "original_message": message
+                }
+            else:
+                # Single recipient - use original format
+                return {
+                    "action": "send_message",
+                    "recipient": recipients[0] if recipients else recipients_text,
+                    "message": message,
+                    "original_message": message
+                }
+    
+    return None
+
 def extract_sms_command(text: str) -> Dict[str, str]:
-    """Extract SMS command from voice input using pattern matching"""
+    """Extract SMS command from voice input using pattern matching (original single recipient)"""
     # Common patterns for SMS commands
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
@@ -244,8 +320,7 @@ def extract_sms_command(text: str) -> Dict[str, str]:
             message = match.group(2).strip()
             
             # Clean up common voice recognition artifacts
-            message = message.replace(" period", ".").replace(" comma", ",")
-            message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
+            message = clean_voice_message(message)
             
             return {
                 "action": "send_message",
@@ -255,6 +330,75 @@ def extract_sms_command(text: str) -> Dict[str, str]:
             }
     
     return None
+
+def send_single_sms(recipient: str, message: str) -> Dict[str, Any]:
+    """Send SMS to a single recipient"""
+    
+    if is_phone_number(recipient):
+        formatted_phone = format_phone_number(recipient)
+        result = twilio_client.send_sms(formatted_phone, message)
+        result['formatted_recipient'] = formatted_phone
+        result['original_recipient'] = recipient
+        return result
+    else:
+        return {
+            "success": False,
+            "error": f"Invalid phone number format: {recipient}",
+            "original_recipient": recipient
+        }
+
+def send_sms_to_multiple(recipients: List[str], message: str, enhance: bool = True) -> Dict[str, Any]:
+    """Send SMS to multiple recipients with threading for better performance"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    
+    # Use ThreadPoolExecutor for concurrent SMS sending
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all SMS tasks
+        future_to_recipient = {
+            executor.submit(send_single_sms, recipient, enhanced_message): recipient 
+            for recipient in recipients
+        }
+        
+        # Collect results
+        for future in concurrent.futures.as_completed(future_to_recipient):
+            recipient = future_to_recipient[future]
+            try:
+                result = future.result()
+                result['recipient'] = recipient
+                results.append(result)
+                
+                if result.get('success'):
+                    successful_sends += 1
+                else:
+                    failed_sends += 1
+                    
+            except Exception as exc:
+                error_result = {
+                    'recipient': recipient,
+                    'success': False,
+                    'error': f'Exception occurred: {exc}'
+                }
+                results.append(error_result)
+                failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": len(recipients),
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "results": results
+    }
 
 # ----- CMP Action Handlers -----
 
@@ -296,11 +440,51 @@ def handle_send_message(data):
         enhanced_message = enhance_message_with_claude(message)
         return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}"
 
+def handle_send_message_multi(data: Dict[str, Any]) -> str:
+    """Handle sending messages to multiple recipients"""
+    
+    recipients = data.get("recipients", [])
+    message = data.get("message", "")
+    original_message = data.get("original_message", message)
+    
+    if not recipients:
+        return "❌ No recipients specified"
+    
+    if not message:
+        return "❌ No message specified"
+    
+    print(f"[CMP] Sending message to {len(recipients)} recipients: {recipients}")
+    
+    # Send to multiple recipients
+    result = send_sms_to_multiple(recipients, original_message, enhance=True)
+    
+    if result["success"]:
+        success_msg = f"✅ Message sent to {result['successful_sends']}/{result['total_recipients']} recipients!"
+        success_msg += f"\n\nOriginal: {result['original_message']}"
+        success_msg += f"\nEnhanced: {result['enhanced_message']}"
+        
+        if result["failed_sends"] > 0:
+            success_msg += f"\n\n⚠️ {result['failed_sends']} messages failed to send"
+            
+        # Add details for each recipient
+        success_msg += "\n\n📋 Delivery Details:"
+        for res in result["results"]:
+            status = "✅" if res.get("success") else "❌"
+            recipient = res.get("original_recipient", res.get("recipient", "Unknown"))
+            success_msg += f"\n{status} {recipient}"
+            if not res.get("success"):
+                success_msg += f" - {res.get('error', 'Unknown error')}"
+        
+        return success_msg
+    else:
+        return f"❌ Failed to send messages to all {result['total_recipients']} recipients"
+
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
     return "Conversation log saved."
 
 def dispatch_action(parsed):
+    """Enhanced dispatch function with multi-recipient support"""
     action = parsed.get("action")
     if action == "create_task":
         return handle_create_task(parsed)
@@ -308,6 +492,8 @@ def dispatch_action(parsed):
         return handle_create_appointment(parsed)
     elif action == "send_message":
         return handle_send_message(parsed)
+    elif action == "send_message_multi":  # New action type
+        return handle_send_message_multi(parsed)
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
@@ -676,18 +862,25 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>Smart AI Agent</h1>
-    <div class="subtitle">Speak naturally - AI makes it professional</div>
-    <div class="feature-badge">✨ Auto-Enhanced Messages</div>
+    <div class="subtitle">Speak naturally - AI makes it professional + Multi-Recipient SMS</div>
+    <div class="feature-badge">✨ Multi-Recipient Auto-Enhanced Messages</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John saying hey whats up how are you doing'" />
+        <input type="text" id="command" placeholder="Try: 'Text John, Mary, and Bob saying hey everyone how are you doing'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages! Use the microphone button below or type your command.</div>
+      <div class="response-text" id="response">🎯 Ready to send professional messages to multiple recipients! 
+
+Examples you can try:
+• "Text John and Mary saying the meeting moved to 3pm"
+• "Send a message to Mom, Dad, and Sarah saying I'll be home late"
+• "Message +1234567890 and +0987654321 that dinner is ready"
+
+Use the microphone button below or type your command.</div>
     </div>
 
     <div class="voice-controls">
@@ -809,7 +1002,7 @@ HTML_TEMPLATE = """
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Text John saying hey whats up how are you doing"';
+      document.getElementById('command').placeholder = 'Try: "Text John, Mary, and Bob saying hey everyone how are you doing"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
@@ -855,7 +1048,7 @@ HTML_TEMPLATE = """
         return;
       }
 
-      output.textContent = "Processing with AI and enhancing message...";
+      output.textContent = "Processing with AI and enhancing message for multiple recipients...";
 
       fetch("/execute", {
         method: "POST",
@@ -864,7 +1057,7 @@ HTML_TEMPLATE = """
       })
       .then(res => res.json())
       .then(data => {
-        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
+        output.textContent = "✅ " + (data.response || "Done!") + "\n\n📋 Raw Response:\n" + JSON.stringify(data.claude_output, null, 2);
         input.value = "";
         document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
       })
@@ -923,29 +1116,33 @@ def execute():
         data = request.json
         prompt = data.get("text", "")
         
-        # First, try to extract SMS command using pattern matching
-        sms_command = extract_sms_command(prompt)
+        # First, try to extract multi-recipient SMS command
+        multi_sms_command = extract_sms_command_multi(prompt)
         
-        if sms_command:
-            # Direct SMS processing with enhanced message
-            print(f"[VOICE SMS] Detected SMS command: {sms_command}")
-            dispatch_result = handle_send_message(sms_command)
-            return jsonify({
-                "response": dispatch_result,
-                "claude_output": sms_command
-            })
-        else:
-            # Fall back to Claude for other commands
-            result = call_claude(prompt)
+        if multi_sms_command:
+            print(f"[VOICE SMS] Detected command: {multi_sms_command}")
             
-            if "error" in result:
-                return jsonify({"response": result["error"]}), 500
-
-            dispatch_result = dispatch_action(result)
+            if multi_sms_command["action"] == "send_message_multi":
+                dispatch_result = handle_send_message_multi(multi_sms_command)
+            else:
+                dispatch_result = handle_send_message(multi_sms_command)
+                
             return jsonify({
                 "response": dispatch_result,
-                "claude_output": result
+                "claude_output": multi_sms_command
             })
+        
+        # Fall back to Claude for other commands
+        result = call_claude(prompt)
+        
+        if "error" in result:
+            return jsonify({"response": result["error"]}), 500
+
+        dispatch_result = dispatch_action(result)
+        return jsonify({
+            "response": dispatch_result,
+            "claude_output": result
+        })
 
     except Exception as e:
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
@@ -960,12 +1157,12 @@ def health_check():
         "twilio_status": twilio_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
-        "features": ["voice_sms", "message_enhancement", "professional_formatting"]
+        "features": ["voice_sms", "multi_recipient_sms", "message_enhancement", "professional_formatting"]
     })
 
 @app.route('/test_sms', methods=['POST'])
 def test_sms():
-    """Test SMS endpoint"""
+    """Test single SMS endpoint"""
     data = request.json
     to = data.get('to')
     message = data.get('message', 'Test message from Enhanced Flask AI Agent')
@@ -983,6 +1180,23 @@ def test_sms():
     else:
         result = twilio_client.send_sms(to, message)
     
+    return jsonify(result)
+
+@app.route('/test_multi_sms', methods=['POST'])
+def test_multi_sms():
+    """Test multi-recipient SMS endpoint"""
+    data = request.json
+    recipients = data.get('recipients', [])  # List of phone numbers
+    message = data.get('message', 'Test multi-recipient message from Enhanced Flask AI Agent')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_sms_to_multiple(recipients, message, enhance)
     return jsonify(result)
 
 @app.route('/enhance_message', methods=['POST'])
@@ -1008,10 +1222,14 @@ def twilio_info():
     return jsonify(result)
 
 if __name__ == '__main__':
-    print("🚀 Starting Enhanced Smart AI Agent Flask App")
+    print("🚀 Starting Enhanced Smart AI Agent Flask App with Multi-Recipient SMS")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print("✨ Features: Professional Voice SMS, Message Enhancement, Auto-formatting")
+    print("✨ Features: Multi-Recipient SMS, Professional Voice SMS, Message Enhancement, Auto-formatting")
+    print("\n📋 Voice Command Examples:")
+    print("  • 'Text John and Mary saying the meeting moved to 3pm'")
+    print("  • 'Send a message to Mom, Dad, and Sarah saying I'll be home late'")
+    print("  • 'Message +1234567890 and +0987654321 that dinner is ready'")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

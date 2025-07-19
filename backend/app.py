@@ -374,7 +374,7 @@ HTML_TEMPLATE = """
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
  <link rel="icon" type="image/png" href="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/687bba55e31a7722ec2593a8.png">
- <link rel="apple-touch-icon" href="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/68712c4ff85f428467bacbb2.png">
+<link rel="apple-touch-icon" href="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/687bc4d4e36c15754e18b561.png">
   <title>Smart AI Agent</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">

@@ -32,12 +32,13 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    # Email configuration
-    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
+    # Email configuration - Network Solutions defaults
+    "smtp_server": os.getenv("SMTP_SERVER", "mail.networksolutions.com"),
     "smtp_port": int(os.getenv("SMTP_PORT", "587")),
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
     "email_name": os.getenv("EMAIL_NAME", "Smart AI Agent"),
+    "email_provider": os.getenv("EMAIL_PROVIDER", "networksolutions").lower(),
 }
 
 INSTRUCTION_PROMPT = """
@@ -110,7 +111,7 @@ Respond with ONLY the subject line, nothing else.
 """
 
 class EmailClient:
-    """SMTP Email client for sending emails"""
+    """SMTP Email client for sending emails with Network Solutions support"""
     
     def __init__(self):
         self.smtp_server = CONFIG["smtp_server"]
@@ -118,14 +119,40 @@ class EmailClient:
         self.email_address = CONFIG["email_address"]
         self.email_password = CONFIG["email_password"]
         self.email_name = CONFIG["email_name"]
+        self.email_provider = CONFIG["email_provider"]
+        
+        # Set defaults based on provider
+        self._configure_provider_defaults()
         
         if self.email_address and self.email_password:
-            print("✅ Email client configured successfully")
+            print(f"✅ Email client configured successfully for {self.email_provider.title()}")
+            print(f"📧 SMTP Server: {self.smtp_server}:{self.smtp_port}")
         else:
             print("⚠️ Email not configured - missing email address or password")
     
+    def _configure_provider_defaults(self):
+        """Configure default settings based on email provider"""
+        if self.email_provider == "networksolutions":
+            # Network Solutions specific settings
+            if self.smtp_server == "smtp.gmail.com":  # If still using default
+                self.smtp_server = "mail.networksolutions.com"
+            if self.smtp_port == 587:  # Common for Network Solutions
+                self.smtp_port = 587
+        elif self.email_provider == "gmail":
+            self.smtp_server = "smtp.gmail.com"
+            self.smtp_port = 587
+        elif self.email_provider == "outlook" or self.email_provider == "hotmail":
+            self.smtp_server = "smtp-mail.outlook.com"
+            self.smtp_port = 587
+        elif self.email_provider == "yahoo":
+            self.smtp_server = "smtp.mail.yahoo.com"
+            self.smtp_port = 587
+        
+        print(f"🔧 Email provider: {self.email_provider.title()}")
+        print(f"🔧 SMTP settings: {self.smtp_server}:{self.smtp_port}")
+    
     def send_email(self, to: str, subject: str, message: str, is_html: bool = False) -> Dict[str, Any]:
-        """Send email via SMTP"""
+        """Send email via SMTP with Network Solutions support"""
         if not self.email_address or not self.email_password:
             return {"error": "Email client not configured"}
         
@@ -140,10 +167,21 @@ class EmailClient:
             body_type = "html" if is_html else "plain"
             msg.attach(MIMEText(message, body_type))
             
-            # Create SMTP session
+            # Create SMTP session with provider-specific handling
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()  # Enable security
-                server.login(self.email_address, self.email_password)
+                server.set_debuglevel(0)  # Set to 1 for debugging
+                
+                # Enable TLS encryption
+                server.starttls()
+                
+                # Login with provider-specific handling
+                if self.email_provider == "networksolutions":
+                    # Network Solutions may require full email as username
+                    username = self.email_address
+                else:
+                    username = self.email_address
+                
+                server.login(username, self.email_password)
                 
                 # Send email
                 text = msg.as_string()
@@ -155,30 +193,101 @@ class EmailClient:
                 "from": self.email_address,
                 "subject": subject,
                 "body": message,
-                "timestamp": datetime.now().isoformat()
+                "timestamp": datetime.now().isoformat(),
+                "provider": self.email_provider
             }
             
+        except smtplib.SMTPAuthenticationError as e:
+            error_msg = f"Authentication failed for {self.email_provider.title()}: {str(e)}"
+            if self.email_provider == "networksolutions":
+                error_msg += "\n💡 For Network Solutions: Ensure you're using your full email address and correct password. Check if 2FA is enabled."
+            return {"error": error_msg}
+        except smtplib.SMTPServerDisconnected as e:
+            return {"error": f"SMTP server disconnected: {str(e)}. Check server settings for {self.email_provider.title()}"}
+        except smtplib.SMTPRecipientsRefused as e:
+            return {"error": f"Recipient refused: {str(e)}"}
         except Exception as e:
-            return {"error": f"Failed to send email: {str(e)}"}
+            return {"error": f"Failed to send email via {self.email_provider.title()}: {str(e)}"}
     
     def test_connection(self) -> Dict[str, Any]:
-        """Test SMTP connection"""
+        """Test SMTP connection with provider-specific troubleshooting"""
         if not self.email_address or not self.email_password:
             return {"error": "Email client not configured"}
         
         try:
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls()
-                server.login(self.email_address, self.email_password)
+                
+                # Use appropriate username for provider
+                username = self.email_address
+                server.login(username, self.email_password)
             
             return {
                 "success": True,
                 "server": self.smtp_server,
                 "port": self.smtp_port,
-                "email": self.email_address
+                "email": self.email_address,
+                "provider": self.email_provider,
+                "message": f"Successfully connected to {self.email_provider.title()} SMTP server"
             }
+        except smtplib.SMTPAuthenticationError as e:
+            error_msg = f"Authentication failed for {self.email_provider.title()}: {str(e)}"
+            troubleshooting = ""
+            
+            if self.email_provider == "networksolutions":
+                troubleshooting = """
+💡 Network Solutions Troubleshooting:
+- Use your full email address as username
+- Use your email account password (not cPanel password)
+- Ensure your domain's email is properly set up
+- Check if your hosting plan includes email services
+- Try mail.yourdomain.com as SMTP server if mail.networksolutions.com fails
+- Verify port 587 or try port 25/465
+- Ensure your IP isn't blocked by Network Solutions
+"""
+            
+            return {"error": error_msg + troubleshooting}
         except Exception as e:
-            return {"error": f"Email connection failed: {str(e)}"}
+            return {"error": f"Email connection failed for {self.email_provider.title()}: {str(e)}"}
+    
+    def get_provider_info(self) -> Dict[str, Any]:
+        """Get provider-specific configuration information"""
+        provider_configs = {
+            "networksolutions": {
+                "smtp_server": "mail.networksolutions.com",
+                "smtp_port": 587,
+                "alternative_servers": [
+                    "mail.yourdomain.com",  # Replace with actual domain
+                    "secure.emailsrvr.com"  # Alternative Network Solutions server
+                ],
+                "alternative_ports": [25, 465, 587],
+                "notes": [
+                    "Use full email address as username",
+                    "Use email account password, not cPanel password",
+                    "Ensure email hosting is active on your plan",
+                    "Some Network Solutions accounts use domain-specific SMTP servers"
+                ]
+            },
+            "gmail": {
+                "smtp_server": "smtp.gmail.com",
+                "smtp_port": 587,
+                "notes": [
+                    "Requires App Password if 2FA is enabled",
+                    "Must enable 'Less secure app access' if not using App Password"
+                ]
+            },
+            "outlook": {
+                "smtp_server": "smtp-mail.outlook.com",
+                "smtp_port": 587,
+                "notes": ["Works with Outlook.com, Hotmail, Live accounts"]
+            }
+        }
+        
+        return provider_configs.get(self.email_provider, {
+            "smtp_server": self.smtp_server,
+            "smtp_port": self.smtp_port,
+            "notes": ["Custom configuration"]
+        })
 
 class TwilioClient:
     """Direct Twilio REST API client"""
@@ -1855,9 +1964,26 @@ def twilio_info():
     result = twilio_client.get_account_info()
     return jsonify(result)
 
+@app.route('/email_config', methods=['GET'])
+def email_config():
+    """Get email provider configuration and troubleshooting info"""
+    provider_info = email_client.get_provider_info()
+    current_config = {
+        "current_smtp_server": email_client.smtp_server,
+        "current_smtp_port": email_client.smtp_port,
+        "current_email": email_client.email_address,
+        "current_provider": email_client.email_provider
+    }
+    
+    return jsonify({
+        "current_config": current_config,
+        "provider_info": provider_info,
+        "status": "configured" if email_client.email_address and email_client.email_password else "not configured"
+    })
+
 @app.route('/email_info', methods=['GET'])
 def email_info():
-    """Get email configuration information"""
+    """Get email connection test results"""
     result = email_client.test_connection()
     return jsonify(result)
 
@@ -1887,11 +2013,19 @@ if __name__ == '__main__':
     print("  TWILIO_ACCOUNT_SID=your_twilio_account_sid")
     print("  TWILIO_AUTH_TOKEN=your_twilio_auth_token")
     print("  TWILIO_PHONE_NUMBER=your_twilio_phone_number")
-    print("  EMAIL_ADDRESS=your_gmail_address")
-    print("  EMAIL_PASSWORD=your_gmail_app_password")
-    print("  SMTP_SERVER=smtp.gmail.com (optional, defaults to Gmail)")
-    print("  SMTP_PORT=587 (optional, defaults to 587)")
+    print("  EMAIL_ADDRESS=your_email@yourdomain.com")
+    print("  EMAIL_PASSWORD=your_email_password")
+    print("  EMAIL_PROVIDER=networksolutions (optional, defaults to networksolutions)")
+    print("  SMTP_SERVER=mail.networksolutions.com (optional, auto-configured)")
+    print("  SMTP_PORT=587 (optional, auto-configured)")
     print("  EMAIL_NAME=Your Name (optional, defaults to 'Smart AI Agent')")
+    print("\\n📧 Network Solutions Email Setup:")
+    print("  - Use your full email address (user@yourdomain.com) as EMAIL_ADDRESS")
+    print("  - Use your email account password (not cPanel password)")
+    print("  - Ensure email hosting is active on your Network Solutions plan")
+    print("  - Default SMTP: mail.networksolutions.com:587")
+    print("  - Alternative: mail.yourdomain.com:587 (replace yourdomain.com)")
+    print("  - Test connection with: curl http://localhost:10000/email_info")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

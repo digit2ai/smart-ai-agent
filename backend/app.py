@@ -1,9 +1,15 @@
-# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS Processing
+# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
+import smtplib
+import ssl
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 import re
@@ -26,6 +32,12 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
+    # Email configuration
+    "smtp_server": os.getenv("SMTP_SERVER", "smtp.gmail.com"),
+    "smtp_port": int(os.getenv("SMTP_PORT", "587")),
+    "email_address": os.getenv("EMAIL_ADDRESS", ""),
+    "email_password": os.getenv("EMAIL_PASSWORD", ""),
+    "email_name": os.getenv("EMAIL_NAME", "Smart AI Agent"),
 }
 
 INSTRUCTION_PROMPT = """
@@ -36,17 +48,20 @@ Supported actions:
 - create_appointment
 - send_message (supports SMS via Twilio)
 - send_message_multi (supports multiple recipients)
+- send_email (supports email via SMTP)
+- send_email_multi (supports multiple email recipients)
 - log_conversation
-- enhance_message (new: for making messages professional)
+- enhance_message (for making messages professional)
 
 Each response must use this structure:
 {
-  "action": "create_task" | "create_appointment" | "send_message" | "send_message_multi" | "log_conversation" | "enhance_message",
-  "title": "...",               // for tasks or appointments
+  "action": "create_task" | "create_appointment" | "send_message" | "send_message_multi" | "send_email" | "send_email_multi" | "log_conversation" | "enhance_message",
+  "title": "...",               // for tasks, appointments, or email subject
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
-  "recipient": "Name or phone number",    // for send_message (single recipient)
-  "recipients": ["Name1", "Name2"],       // for send_message_multi (multiple recipients)
-  "message": "Body of the message",  // for send_message or log
+  "recipient": "Name, phone number, or email",    // for send_message/send_email (single recipient)
+  "recipients": ["Name1", "Name2", "email@example.com"],       // for multi actions
+  "message": "Body of the message/email",  // for send_message, send_email, or log
+  "subject": "Email subject line",    // for email actions
   "original_message": "...",     // for enhance_message action
   "enhanced_message": "...",     // for enhance_message action
   "notes": "Optional details or transcript" // for CRM logs
@@ -57,9 +72,14 @@ For send_message action:
 - Otherwise it will be logged as a regular message
 - Phone numbers should be in E.164 format (e.g., +1234567890)
 
-For send_message_multi action:
-- Recipients can be a mix of phone numbers and names
-- All phone numbers will receive SMS, names will be logged
+For send_email action:
+- If recipient looks like an email (contains @), it will be sent as email
+- Email addresses should be valid format (user@domain.com)
+- Subject is optional, will auto-generate if not provided
+
+For send_message_multi and send_email_multi actions:
+- Recipients can be a mix of phone numbers, emails, and names
+- Phone numbers will receive SMS, emails will receive email, names will be logged
 - Message will be enhanced once and sent to all recipients
 
 Only include fields relevant to the action.
@@ -74,12 +94,91 @@ Please take the following message and improve it:
 - Make the tone professional but friendly
 - Ensure clarity and conciseness
 - Preserve the original meaning completely
-- Keep it appropriate for SMS/text messaging
+- Keep it appropriate for SMS/text messaging and email
 
 Original message: "{original_message}"
 
 Respond with ONLY the enhanced message, nothing else.
 """
+
+EMAIL_SUBJECT_PROMPT = """
+Generate a professional, concise email subject line for the following message content. The subject should be clear, specific, and under 50 characters.
+
+Message content: "{message_content}"
+
+Respond with ONLY the subject line, nothing else.
+"""
+
+class EmailClient:
+    """SMTP Email client for sending emails"""
+    
+    def __init__(self):
+        self.smtp_server = CONFIG["smtp_server"]
+        self.smtp_port = CONFIG["smtp_port"]
+        self.email_address = CONFIG["email_address"]
+        self.email_password = CONFIG["email_password"]
+        self.email_name = CONFIG["email_name"]
+        
+        if self.email_address and self.email_password:
+            print("✅ Email client configured successfully")
+        else:
+            print("⚠️ Email not configured - missing email address or password")
+    
+    def send_email(self, to: str, subject: str, message: str, is_html: bool = False) -> Dict[str, Any]:
+        """Send email via SMTP"""
+        if not self.email_address or not self.email_password:
+            return {"error": "Email client not configured"}
+        
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['From'] = f"{self.email_name} <{self.email_address}>"
+            msg['To'] = to
+            msg['Subject'] = subject
+            
+            # Add body to email
+            body_type = "html" if is_html else "plain"
+            msg.attach(MIMEText(message, body_type))
+            
+            # Create SMTP session
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()  # Enable security
+                server.login(self.email_address, self.email_password)
+                
+                # Send email
+                text = msg.as_string()
+                server.sendmail(self.email_address, to, text)
+            
+            return {
+                "success": True,
+                "to": to,
+                "from": self.email_address,
+                "subject": subject,
+                "body": message,
+                "timestamp": datetime.now().isoformat()
+            }
+            
+        except Exception as e:
+            return {"error": f"Failed to send email: {str(e)}"}
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """Test SMTP connection"""
+        if not self.email_address or not self.email_password:
+            return {"error": "Email client not configured"}
+        
+        try:
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.email_address, self.email_password)
+            
+            return {
+                "success": True,
+                "server": self.smtp_server,
+                "port": self.smtp_port,
+                "email": self.email_address
+            }
+        except Exception as e:
+            return {"error": f"Email connection failed: {str(e)}"}
 
 class TwilioClient:
     """Direct Twilio REST API client"""
@@ -143,10 +242,11 @@ class TwilioClient:
         except Exception as e:
             return {"error": f"Failed to get account info: {str(e)}"}
 
-# Global Twilio client instance
+# Global client instances
 twilio_client = TwilioClient()
+email_client = EmailClient()
 
-def call_claude(prompt, use_enhancement_prompt=False, original_message=""):
+def call_claude(prompt, use_enhancement_prompt=False, use_subject_prompt=False, original_message="", message_content=""):
     """Call Claude API with different prompts based on use case"""
     try:
         headers = {
@@ -157,6 +257,8 @@ def call_claude(prompt, use_enhancement_prompt=False, original_message=""):
         
         if use_enhancement_prompt:
             full_prompt = MESSAGE_ENHANCEMENT_PROMPT.format(original_message=original_message)
+        elif use_subject_prompt:
+            full_prompt = EMAIL_SUBJECT_PROMPT.format(message_content=message_content)
         else:
             full_prompt = f"{INSTRUCTION_PROMPT}\n\nUser: {prompt}"
 
@@ -173,8 +275,8 @@ def call_claude(prompt, use_enhancement_prompt=False, original_message=""):
         if "content" in response_json:
             raw_text = response_json["content"][0]["text"]
             
-            if use_enhancement_prompt:
-                # For message enhancement, return the raw text directly
+            if use_enhancement_prompt or use_subject_prompt:
+                # For message enhancement or subject generation, return the raw text directly
                 return {"enhanced_message": raw_text.strip()}
             else:
                 # For regular commands, parse as JSON
@@ -198,6 +300,19 @@ def enhance_message_with_claude(message: str) -> str:
         print(f"Error enhancing message: {e}")
         return message  # Return original if enhancement fails
 
+def generate_email_subject(message: str) -> str:
+    """Generate email subject using Claude AI"""
+    try:
+        result = call_claude("", use_subject_prompt=True, message_content=message)
+        if "enhanced_message" in result:
+            return result["enhanced_message"]
+        else:
+            # Fallback to simple subject
+            return "Message from Smart AI Agent"
+    except Exception as e:
+        print(f"Error generating subject: {e}")
+        return "Message from Smart AI Agent"
+
 def is_phone_number(recipient: str) -> bool:
     """Check if recipient looks like a phone number"""
     # Remove spaces and common formatting
@@ -210,6 +325,12 @@ def is_phone_number(recipient: str) -> bool:
         return True
     
     return False
+
+def is_email_address(recipient: str) -> bool:
+    """Check if recipient looks like an email address"""
+    # Simple email validation
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    return bool(re.match(email_pattern, recipient.strip()))
 
 def format_phone_number(phone: str) -> str:
     """Format phone number to E.164 format"""
@@ -250,6 +371,52 @@ def clean_voice_message(message: str) -> str:
     message = message.replace(" period", ".").replace(" comma", ",")
     message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
     return message.strip()
+
+def extract_email_command(text: str) -> Dict[str, Any]:
+    """Extract email command from voice input"""
+    # Common patterns for email commands
+    patterns = [
+        r'send (?:an )?email to (.+?) (?:with subject (.+?) )?saying (.+)',
+        r'email (.+?) (?:with subject (.+?) )?saying (.+)',
+        r'send (.+?) (?:an )?email (?:with subject (.+?) )?saying (.+)',
+        r'email (.+?) that (.+)',
+        r'send (?:an )?email to (.+?) (.+)',  # Simple pattern: "email john@example.com hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) == 3 and groups[1]:  # Has subject
+                recipient = groups[0].strip()
+                subject = groups[1].strip()
+                message = groups[2].strip()
+            elif len(groups) == 3:  # No subject in middle
+                recipient = groups[0].strip()
+                subject = None
+                message = groups[2].strip()
+            else:  # Simple pattern
+                recipient = groups[0].strip()
+                subject = None
+                message = groups[1].strip()
+            
+            # Clean up common voice recognition artifacts
+            message = clean_voice_message(message)
+            if subject:
+                subject = clean_voice_message(subject)
+            
+            return {
+                "action": "send_email",
+                "recipient": recipient,
+                "subject": subject,
+                "message": message,
+                "original_message": message
+            }
+    
+    return None
 
 def extract_sms_command(text: str) -> Dict[str, str]:
     """Extract SMS command from voice input using pattern matching (ORIGINAL WORKING VERSION)"""
@@ -331,6 +498,64 @@ def extract_sms_command_multi(text: str) -> Dict[str, Any]:
     
     return None
 
+def extract_email_command_multi(text: str) -> Dict[str, Any]:
+    """Enhanced email command extraction supporting multiple recipients"""
+    
+    # Patterns for multiple email recipients
+    multi_patterns = [
+        # "send an email to john@example.com and mary@example.com saying hello"
+        r'send (?:an )?email to (.+?) (?:with subject (.+?) )?saying (.+)',
+        # "email john@example.com, mary@example.com saying hello"
+        r'email (.+?) saying (.+)',
+        # "send john@example.com and mary@example.com an email saying hello"
+        r'send (.+?) (?:an )?email saying (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in multi_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) == 3 and groups[1]:  # Has subject
+                recipients_text = groups[0].strip()
+                subject = groups[1].strip()
+                message = groups[2].strip()
+            else:  # No subject
+                recipients_text = groups[0].strip()
+                subject = None
+                message = groups[-1].strip()
+            
+            # Parse multiple recipients
+            recipients = parse_recipients(recipients_text)
+            
+            # Clean up voice recognition artifacts
+            message = clean_voice_message(message)
+            if subject:
+                subject = clean_voice_message(subject)
+            
+            # Check if multiple recipients
+            if len(recipients) > 1:
+                return {
+                    "action": "send_email_multi",
+                    "recipients": recipients,
+                    "subject": subject,
+                    "message": message,
+                    "original_message": message
+                }
+            else:
+                # Single recipient - use original format
+                return {
+                    "action": "send_email",
+                    "recipient": recipients[0] if recipients else recipients_text,
+                    "subject": subject,
+                    "message": message,
+                    "original_message": message
+                }
+    
+    return None
+
 def send_single_sms(recipient: str, message: str) -> Dict[str, Any]:
     """Send SMS to a single recipient"""
     
@@ -339,12 +564,30 @@ def send_single_sms(recipient: str, message: str) -> Dict[str, Any]:
         result = twilio_client.send_sms(formatted_phone, message)
         result['formatted_recipient'] = formatted_phone
         result['original_recipient'] = recipient
+        result['type'] = 'sms'
         return result
     else:
         return {
             "success": False,
             "error": f"Invalid phone number format: {recipient}",
-            "original_recipient": recipient
+            "original_recipient": recipient,
+            "type": 'sms'
+        }
+
+def send_single_email(recipient: str, subject: str, message: str) -> Dict[str, Any]:
+    """Send email to a single recipient"""
+    
+    if is_email_address(recipient):
+        result = email_client.send_email(recipient, subject, message)
+        result['original_recipient'] = recipient
+        result['type'] = 'email'
+        return result
+    else:
+        return {
+            "success": False,
+            "error": f"Invalid email address format: {recipient}",
+            "original_recipient": recipient,
+            "type": 'email'
         }
 
 def send_sms_to_multiple(recipients: List[str], message: str, enhance: bool = True) -> Dict[str, Any]:
@@ -385,7 +628,8 @@ def send_sms_to_multiple(recipients: List[str], message: str, enhance: bool = Tr
                 error_result = {
                     'recipient': recipient,
                     'success': False,
-                    'error': f'Exception occurred: {exc}'
+                    'error': f'Exception occurred: {exc}',
+                    'type': 'sms'
                 }
                 results.append(error_result)
                 failed_sends += 1
@@ -397,7 +641,134 @@ def send_sms_to_multiple(recipients: List[str], message: str, enhance: bool = Tr
         "failed_sends": failed_sends,
         "original_message": message,
         "enhanced_message": enhanced_message,
-        "results": results
+        "results": results,
+        "type": "sms_multi"
+    }
+
+def send_emails_to_multiple(recipients: List[str], subject: str, message: str, enhance: bool = True) -> Dict[str, Any]:
+    """Send emails to multiple recipients with threading for better performance"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    # Generate subject if not provided
+    if not subject:
+        subject = generate_email_subject(enhanced_message)
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    
+    # Use ThreadPoolExecutor for concurrent email sending
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all email tasks
+        future_to_recipient = {
+            executor.submit(send_single_email, recipient, subject, enhanced_message): recipient 
+            for recipient in recipients
+        }
+        
+        # Collect results
+        for future in concurrent.futures.as_completed(future_to_recipient):
+            recipient = future_to_recipient[future]
+            try:
+                result = future.result()
+                result['recipient'] = recipient
+                results.append(result)
+                
+                if result.get('success'):
+                    successful_sends += 1
+                else:
+                    failed_sends += 1
+                    
+            except Exception as exc:
+                error_result = {
+                    'recipient': recipient,
+                    'success': False,
+                    'error': f'Exception occurred: {exc}',
+                    'type': 'email'
+                }
+                results.append(error_result)
+                failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": len(recipients),
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "subject": subject,
+        "results": results,
+        "type": "email_multi"
+    }
+
+def send_mixed_messages(recipients: List[str], message: str, subject: str = None, enhance: bool = True) -> Dict[str, Any]:
+    """Send messages to mixed recipients (SMS for phones, emails for email addresses)"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Separate recipients by type
+    phone_recipients = []
+    email_recipients = []
+    other_recipients = []
+    
+    for recipient in recipients:
+        if is_phone_number(recipient):
+            phone_recipients.append(recipient)
+        elif is_email_address(recipient):
+            email_recipients.append(recipient)
+        else:
+            other_recipients.append(recipient)
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    total_recipients = len(recipients)
+    
+    # Send SMS to phone numbers
+    if phone_recipients:
+        sms_result = send_sms_to_multiple(phone_recipients, message, enhance=False)  # Already enhanced
+        results.extend(sms_result.get('results', []))
+        successful_sends += sms_result.get('successful_sends', 0)
+        failed_sends += sms_result.get('failed_sends', 0)
+    
+    # Send emails to email addresses
+    if email_recipients:
+        email_result = send_emails_to_multiple(email_recipients, subject, message, enhance=False)  # Already enhanced
+        results.extend(email_result.get('results', []))
+        successful_sends += email_result.get('successful_sends', 0)
+        failed_sends += email_result.get('failed_sends', 0)
+    
+    # Log other recipients
+    for recipient in other_recipients:
+        results.append({
+            'recipient': recipient,
+            'success': False,
+            'error': 'Unrecognized recipient format (not phone or email)',
+            'type': 'unknown'
+        })
+        failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": total_recipients,
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "phone_recipients": len(phone_recipients),
+        "email_recipients": len(email_recipients),
+        "other_recipients": len(other_recipients),
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "subject": subject,
+        "results": results,
+        "type": "mixed_multi"
     }
 
 # ----- CMP Action Handlers -----
@@ -440,6 +811,41 @@ def handle_send_message(data):
         enhanced_message = enhance_message_with_claude(message)
         return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}"
 
+def handle_send_email(data):
+    """Handle sending email to a single recipient"""
+    recipient = data.get("recipient", "")
+    message = data.get("message", "")
+    subject = data.get("subject", "")
+    original_message = data.get("original_message", message)
+    
+    print(f"[CMP] Sending email to {recipient}")
+    
+    # Check if recipient is an email address
+    if is_email_address(recipient):
+        print(f"[CMP] Detected email address, processing email to {recipient}")
+        
+        # Enhance the message using Claude AI
+        print(f"[CMP] Original message: {original_message}")
+        enhanced_message = enhance_message_with_claude(original_message)
+        print(f"[CMP] Enhanced message: {enhanced_message}")
+        
+        # Generate subject if not provided
+        if not subject:
+            subject = generate_email_subject(enhanced_message)
+            print(f"[CMP] Generated subject: {subject}")
+        
+        # Send the enhanced email
+        result = email_client.send_email(recipient, subject, enhanced_message)
+        
+        if "error" in result:
+            return f"Failed to send email to {recipient}: {result['error']}"
+        else:
+            return f"✅ Professional email sent to {recipient}!\n\nSubject: {subject}\nOriginal: {original_message}\nEnhanced: {enhanced_message}\n\nSent at: {result.get('timestamp', 'N/A')}"
+    else:
+        # Not an email address
+        enhanced_message = enhance_message_with_claude(message)
+        return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}\n\nNote: {recipient} is not a valid email address"
+
 def handle_send_message_multi(data: Dict[str, Any]) -> str:
     """Handle sending messages to multiple recipients"""
     
@@ -479,12 +885,53 @@ def handle_send_message_multi(data: Dict[str, Any]) -> str:
     else:
         return f"❌ Failed to send messages to all {result['total_recipients']} recipients"
 
+def handle_send_email_multi(data: Dict[str, Any]) -> str:
+    """Handle sending emails to multiple recipients"""
+    
+    recipients = data.get("recipients", [])
+    message = data.get("message", "")
+    subject = data.get("subject", "")
+    original_message = data.get("original_message", message)
+    
+    if not recipients:
+        return "❌ No recipients specified"
+    
+    if not message:
+        return "❌ No message specified"
+    
+    print(f"[CMP] Sending email to {len(recipients)} recipients: {recipients}")
+    
+    # Send emails to multiple recipients
+    result = send_emails_to_multiple(recipients, subject, original_message, enhance=True)
+    
+    if result["success"]:
+        success_msg = f"✅ Email sent to {result['successful_sends']}/{result['total_recipients']} recipients!"
+        success_msg += f"\n\nSubject: {result['subject']}"
+        success_msg += f"\nOriginal: {result['original_message']}"
+        success_msg += f"\nEnhanced: {result['enhanced_message']}"
+        
+        if result["failed_sends"] > 0:
+            success_msg += f"\n\n⚠️ {result['failed_sends']} emails failed to send"
+            
+        # Add details for each recipient
+        success_msg += "\n\n📋 Delivery Details:"
+        for res in result["results"]:
+            status = "✅" if res.get("success") else "❌"
+            recipient = res.get("original_recipient", res.get("recipient", "Unknown"))
+            success_msg += f"\n{status} {recipient}"
+            if not res.get("success"):
+                success_msg += f" - {res.get('error', 'Unknown error')}"
+        
+        return success_msg
+    else:
+        return f"❌ Failed to send emails to all {result['total_recipients']} recipients"
+
 def handle_log_conversation(data):
     print("[CMP] Logging conversation:", data.get("notes"))
     return "Conversation log saved."
 
 def dispatch_action(parsed):
-    """Enhanced dispatch function with multi-recipient support"""
+    """Enhanced dispatch function with email and multi-recipient support"""
     action = parsed.get("action")
     if action == "create_task":
         return handle_create_task(parsed)
@@ -492,8 +939,12 @@ def dispatch_action(parsed):
         return handle_create_appointment(parsed)
     elif action == "send_message":
         return handle_send_message(parsed)
-    elif action == "send_message_multi":  # New action type
+    elif action == "send_message_multi":
         return handle_send_message_multi(parsed)
+    elif action == "send_email":
+        return handle_send_email(parsed)
+    elif action == "send_email_multi":
+        return handle_send_email_multi(parsed)
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
@@ -505,7 +956,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with professional voice SMS",
+        "description": "AI-powered task and appointment manager with professional voice SMS & Email",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -862,27 +1313,31 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>Smart AI Agent</h1>
-    <div class="subtitle">Speak naturally - AI makes it professional + Multi-Recipient SMS</div>
-    <div class="feature-badge">✨ Multi-Recipient Auto-Enhanced Messages</div>
+    <div class="subtitle">Speak naturally - AI handles SMS & Email professionally</div>
+    <div class="feature-badge">✨ Multi-Recipient Auto-Enhanced Messages & Emails</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Text John and Mary saying hello everyone'" />
+        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Email john@example.com saying meeting at 3pm'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages! 
+      <div class="response-text" id="response">🎯 Ready to send professional messages and emails! 
 
-Single recipient examples:
+📱 SMS Examples:
 • "Text 8136414177 saying hey how are you"
-• "Send a message to John saying the meeting moved"
-
-Multi-recipient examples:
 • "Text John and Mary saying the meeting moved to 3pm"
-• "Send a message to Mom, Dad, and Sarah saying I'll be home late"
-• "Message 8136414177, 8134210102, and 6566001400 saying hello everyone"
+
+📧 Email Examples:
+• "Email john@example.com saying the meeting is at 3pm"
+• "Email john@example.com with subject meeting update saying the time changed"
+• "Email john@example.com and mary@example.com saying hello everyone"
+
+🔄 Mixed Examples:
+• "Send a message to 8136414177 and john@example.com saying hello"
+• "Message Mom and dad@example.com that I'll be home late"
 
 Use the microphone button below or type your command.</div>
     </div>
@@ -1006,7 +1461,7 @@ Use the microphone button below or type your command.</div>
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Text John and Mary saying hello everyone"';
+      document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Email john@example.com saying meeting at 3pm"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
@@ -1114,18 +1569,42 @@ Use the microphone button below or type your command.</div>
 def root():
     return HTML_TEMPLATE
 
-# THIS IS THE KEY FIX: Original execute route order restored
+# Enhanced execute route with email support
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
         
-        # FIRST: Try the original extract_sms_command (this was working on mobile before)
+        # FIRST: Try email commands
+        email_command = extract_email_command(prompt)
+        
+        if email_command:
+            print(f"[VOICE EMAIL] Detected email command: {email_command}")
+            dispatch_result = handle_send_email(email_command)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": email_command
+            })
+        
+        # SECOND: Try multi-recipient email commands
+        multi_email_command = extract_email_command_multi(prompt)
+        
+        if multi_email_command:
+            print(f"[VOICE EMAIL MULTI] Detected multi-recipient email: {multi_email_command}")
+            if multi_email_command["action"] == "send_email_multi":
+                dispatch_result = handle_send_email_multi(multi_email_command)
+            else:
+                dispatch_result = handle_send_email(multi_email_command)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": multi_email_command
+            })
+        
+        # THIRD: Try the original SMS command (this was working on mobile before)
         sms_command = extract_sms_command(prompt)
         
         if sms_command:
-            # Direct SMS processing with enhanced message (ORIGINAL WAY)
             print(f"[VOICE SMS] Detected SMS command: {sms_command}")
             dispatch_result = handle_send_message(sms_command)
             return jsonify({
@@ -1133,7 +1612,7 @@ def execute():
                 "claude_output": sms_command
             })
         
-        # SECOND: Only if original fails, try multi-recipient
+        # FOURTH: Try multi-recipient SMS
         multi_sms_command = extract_sms_command_multi(prompt)
         
         if multi_sms_command:
@@ -1147,7 +1626,64 @@ def execute():
                 "claude_output": multi_sms_command
             })
         
-        # THIRD: Fall back to Claude for other commands (ORIGINAL WAY)
+        # FIFTH: Check for mixed message commands (phone numbers and emails together)
+        if "message" in prompt.lower() or "send" in prompt.lower():
+            # Look for patterns that might contain both phones and emails
+            mixed_patterns = [
+                r'(?:send|message) (.+?) (?:saying|that) (.+)',
+                r'(?:tell|notify) (.+?) (?:that|about) (.+)',
+            ]
+            
+            for pattern in mixed_patterns:
+                match = re.search(pattern, prompt.lower(), re.IGNORECASE)
+                if match:
+                    recipients_text = match.group(1).strip()
+                    message = match.group(2).strip()
+                    recipients = parse_recipients(recipients_text)
+                    
+                    # Check if we have mixed recipient types
+                    has_phone = any(is_phone_number(r) for r in recipients)
+                    has_email = any(is_email_address(r) for r in recipients)
+                    
+                    if has_phone or has_email:
+                        print(f"[MIXED MESSAGING] Detected mixed recipients: {recipients}")
+                        result = send_mixed_messages(recipients, message, enhance=True)
+                        
+                        # Format response
+                        if result["success"]:
+                            response_msg = f"✅ Mixed messages sent to {result['successful_sends']}/{result['total_recipients']} recipients!"
+                            response_msg += f"\n\n📱 SMS: {result['phone_recipients']} recipients"
+                            response_msg += f"\n📧 Email: {result['email_recipients']} recipients"
+                            if result['other_recipients'] > 0:
+                                response_msg += f"\n❓ Other: {result['other_recipients']} recipients"
+                            
+                            response_msg += f"\n\nOriginal: {result['original_message']}"
+                            response_msg += f"\nEnhanced: {result['enhanced_message']}"
+                            
+                            if result["failed_sends"] > 0:
+                                response_msg += f"\n\n⚠️ {result['failed_sends']} messages failed"
+                            
+                            # Add delivery details
+                            response_msg += "\n\n📋 Delivery Details:"
+                            for res in result["results"]:
+                                status = "✅" if res.get("success") else "❌"
+                                recipient = res.get("original_recipient", res.get("recipient", "Unknown"))
+                                msg_type = res.get("type", "unknown").upper()
+                                response_msg += f"\n{status} {recipient} ({msg_type})"
+                                if not res.get("success"):
+                                    response_msg += f" - {res.get('error', 'Unknown error')}"
+                            
+                            return jsonify({
+                                "response": response_msg,
+                                "claude_output": {
+                                    "action": "mixed_messaging",
+                                    "recipients": recipients,
+                                    "message": message,
+                                    "result": result
+                                }
+                            })
+        
+        # SIXTH: Fall back to Claude for other commands
         result = call_claude(prompt)
         
         if "error" in result:
@@ -1166,13 +1702,16 @@ def execute():
 def health_check():
     """Health check endpoint"""
     twilio_status = "configured" if twilio_client.client else "not configured"
+    email_status = "configured" if email_client.email_address and email_client.email_password else "not configured"
     
     return jsonify({
         "status": "healthy",
         "twilio_status": twilio_status,
+        "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
-        "features": ["voice_sms", "multi_recipient_sms", "message_enhancement", "professional_formatting"]
+        "email_address": CONFIG["email_address"] if CONFIG["email_address"] else "not set",
+        "features": ["voice_sms", "voice_email", "multi_recipient_sms", "multi_recipient_email", "mixed_messaging", "message_enhancement", "professional_formatting", "auto_subject_generation"]
     })
 
 @app.route('/test_sms', methods=['POST'])
@@ -1197,6 +1736,34 @@ def test_sms():
     
     return jsonify(result)
 
+@app.route('/test_email', methods=['POST'])
+def test_email():
+    """Test single email endpoint"""
+    data = request.json
+    to = data.get('to')
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test email from Enhanced Flask AI Agent with Email Support')
+    enhance = data.get('enhance', True)
+    
+    if not to:
+        return jsonify({"error": "Email address 'to' is required"}), 400
+    
+    # Optionally enhance the message
+    if enhance:
+        enhanced_message = enhance_message_with_claude(message)
+        if not subject:
+            subject = generate_email_subject(enhanced_message)
+        result = email_client.send_email(to, subject, enhanced_message)
+        result['original_message'] = message
+        result['enhanced_message'] = enhanced_message
+        result['generated_subject'] = subject
+    else:
+        if not subject:
+            subject = "Test Email from Smart AI Agent"
+        result = email_client.send_email(to, subject, message)
+    
+    return jsonify(result)
+
 @app.route('/test_multi_sms', methods=['POST'])
 def test_multi_sms():
     """Test multi-recipient SMS endpoint"""
@@ -1212,6 +1779,42 @@ def test_multi_sms():
         return jsonify({"error": "Recipients must be a list"}), 400
     
     result = send_sms_to_multiple(recipients, message, enhance)
+    return jsonify(result)
+
+@app.route('/test_multi_email', methods=['POST'])
+def test_multi_email():
+    """Test multi-recipient email endpoint"""
+    data = request.json
+    recipients = data.get('recipients', [])  # List of email addresses
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test multi-recipient email from Enhanced Flask AI Agent')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_emails_to_multiple(recipients, subject, message, enhance)
+    return jsonify(result)
+
+@app.route('/test_mixed', methods=['POST'])
+def test_mixed():
+    """Test mixed messaging endpoint (SMS + Email)"""
+    data = request.json
+    recipients = data.get('recipients', [])  # Mix of phone numbers and email addresses
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test mixed message from Enhanced Flask AI Agent')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_mixed_messages(recipients, message, subject, enhance)
     return jsonify(result)
 
 @app.route('/enhance_message', methods=['POST'])
@@ -1230,26 +1833,65 @@ def enhance_message_endpoint():
         "enhanced": enhanced
     })
 
+@app.route('/generate_subject', methods=['POST'])
+def generate_subject_endpoint():
+    """Endpoint to test email subject generation"""
+    data = request.json
+    message = data.get('message', '')
+    
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    
+    subject = generate_email_subject(message)
+    
+    return jsonify({
+        "message": message,
+        "generated_subject": subject
+    })
+
 @app.route('/twilio_info', methods=['GET'])
 def twilio_info():
     """Get Twilio account information"""
     result = twilio_client.get_account_info()
     return jsonify(result)
 
+@app.route('/email_info', methods=['GET'])
+def email_info():
+    """Get email configuration information"""
+    result = email_client.test_connection()
+    return jsonify(result)
+
 if __name__ == '__main__':
-    print("🚀 Starting Enhanced Smart AI Agent Flask App with Multi-Recipient SMS")
+    print("🚀 Starting Enhanced Smart AI Agent Flask App with SMS & Email Support")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
+    print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print("✨ Features: Multi-Recipient SMS, Professional Voice SMS, Message Enhancement, Auto-formatting")
-    print("🔧 MOBILE FIX: Original single SMS detection restored to work on mobile")
-    print("📱 Execution order: Original SMS → Multi SMS → Claude fallback")
+    print("✨ Features: Multi-Recipient SMS, Multi-Recipient Email, Mixed Messaging, Professional Voice Processing, Message Enhancement, Auto-Subject Generation")
+    print("🔧 Execution order: Email → Multi-Email → SMS → Multi-SMS → Mixed → Claude fallback")
     print("\\n📋 Voice Command Examples:")
-    print("  Single recipient (mobile-friendly):")
+    print("  📱 SMS Commands:")
     print("    • 'Text 8136414177 saying hey how are you'")
     print("    • 'Send a message to John saying the meeting moved'")
-    print("  Multi-recipient (desktop + mobile):")
     print("    • 'Text John and Mary saying the meeting moved to 3pm'")
-    print("    • 'Message 8136414177, 8134210102, and 6566001400 saying hello everyone'")
+    print("  📧 Email Commands:")
+    print("    • 'Email john@example.com saying the meeting is at 3pm'")
+    print("    • 'Email john@example.com with subject meeting update saying the time changed'")
+    print("    • 'Email john@example.com and mary@example.com saying hello everyone'")
+    print("  🔄 Mixed Commands:")
+    print("    • 'Send a message to 8136414177 and john@example.com saying hello'")
+    print("    • 'Message Mom and dad@example.com that I'll be home late'")
+    
+    # Environment variable setup guide
+    print("\\n🔧 Environment Variables Required:")
+    print("  CLAUDE_API_KEY=your_claude_api_key")
+    print("  TWILIO_ACCOUNT_SID=your_twilio_account_sid")
+    print("  TWILIO_AUTH_TOKEN=your_twilio_auth_token")
+    print("  TWILIO_PHONE_NUMBER=your_twilio_phone_number")
+    print("  EMAIL_ADDRESS=your_gmail_address")
+    print("  EMAIL_PASSWORD=your_gmail_app_password")
+    print("  SMTP_SERVER=smtp.gmail.com (optional, defaults to Gmail)")
+    print("  SMTP_PORT=587 (optional, defaults to 587)")
+    print("  EMAIL_NAME=Your Name (optional, defaults to 'Smart AI Agent')")
     
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, debug=True)

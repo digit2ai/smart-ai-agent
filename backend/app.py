@@ -391,22 +391,32 @@ class ServiceReminderManager:
         self.email_client = email_client
         self.running = False
         self.check_thread = None
+        self.scheduler = None
     
     def start_background_checker(self):
-        """Start background thread to check for due reminders"""
+        """Start background thread to check for due reminders - simplified for deployment"""
         if self.running:
             return
         
-        self.running = True
-        self.check_thread = threading.Thread(target=self._background_check_loop, daemon=True)
-        self.check_thread.start()
-        print("✅ Service reminder background checker started")
+        try:
+            # Use simple threading approach for better deployment compatibility
+            self.running = True
+            self.check_thread = threading.Thread(target=self._background_check_loop, daemon=True)
+            self.check_thread.start()
+            print("✅ Service reminder background checker started (threading mode)")
+        except Exception as e:
+            print(f"⚠️ Could not start background checker: {e}")
+            print("📝 Service reminders will work manually via API calls")
     
     def stop_background_checker(self):
         """Stop background reminder checker"""
         self.running = False
-        if self.check_thread:
-            self.check_thread.join()
+        if self.check_thread and self.check_thread.is_alive():
+            # Give thread time to finish current iteration
+            for _ in range(5):
+                if not self.check_thread.is_alive():
+                    break
+                time.sleep(1)
         print("🛑 Service reminder background checker stopped")
     
     def _background_check_loop(self):
@@ -414,14 +424,19 @@ class ServiceReminderManager:
         while self.running:
             try:
                 self.check_and_send_reminders()
-                # Wait 1 hour before next check
-                for _ in range(3600):  # 3600 seconds = 1 hour
+                # Wait 1 hour before next check (3600 seconds)
+                # Break into smaller sleeps to allow for quicker shutdown
+                for _ in range(360):  # 360 * 10 seconds = 1 hour
+                    if not self.running:
+                        break
+                    time.sleep(10)
+            except Exception as e:
+                print(f"Error in reminder background check: {e}")
+                # Wait 1 minute on error before retrying
+                for _ in range(60):
                     if not self.running:
                         break
                     time.sleep(1)
-            except Exception as e:
-                print(f"Error in reminder background check: {e}")
-                time.sleep(60)  # Wait 1 minute on error
     
     def check_and_send_reminders(self) -> Dict[str, Any]:
         """Check for due reminders and send notifications"""
@@ -2950,6 +2965,7 @@ if __name__ == '__main__':
     
     try:
         app.run(host="0.0.0.0", port=port, debug=True)
-   finally:
+    finally:
         # Stop background reminder checker when app shuts down
-        service_manager.stop_background_checker()
+        service_manager.stop_background_checker() john@example.com saying the meeting is at 3pm"
+• "Email

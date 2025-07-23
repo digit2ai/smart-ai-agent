@@ -1,4 +1,4 @@
-# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing
+# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing + Service Reminders
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -10,10 +10,15 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from email.mime.base import MIMEBase
 from email import encoders
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Dict, Any, Optional, List
 import re
 import concurrent.futures
+import sqlite3
+import threading
+import time
+from dataclasses import dataclass, asdict
+from enum import Enum
 
 # Import Twilio REST API client
 try:
@@ -41,6 +46,43 @@ CONFIG = {
     "email_provider": os.getenv("EMAIL_PROVIDER", "networksolutions").lower(),
 }
 
+# Service Reminder Enums and Data Classes
+class ServiceType(Enum):
+    OIL_CHANGE = "oil_change"
+    TIRE_ROTATION = "tire_rotation"
+    BRAKE_INSPECTION = "brake_inspection"
+    AIR_FILTER = "air_filter"
+    TRANSMISSION = "transmission"
+    COOLANT = "coolant"
+    TUNE_UP = "tune_up"
+    INSPECTION = "inspection"
+    REGISTRATION = "registration"
+    INSURANCE = "insurance"
+    CUSTOM = "custom"
+
+class ReminderStatus(Enum):
+    ACTIVE = "active"
+    COMPLETED = "completed"
+    OVERDUE = "overdue"
+    CANCELLED = "cancelled"
+
+@dataclass
+class ServiceReminder:
+    id: Optional[int] = None
+    service_type: str = ""
+    vehicle_info: str = ""
+    description: str = ""
+    due_date: str = ""
+    due_mileage: Optional[int] = None
+    current_mileage: Optional[int] = None
+    contact_method: str = "sms"  # sms, email, both
+    contact_info: str = ""
+    notification_days: int = 7  # Days before due date to send reminder
+    status: str = ReminderStatus.ACTIVE.value
+    created_at: str = ""
+    last_notified: Optional[str] = None
+    notes: str = ""
+
 INSTRUCTION_PROMPT = """
 You are an intelligent assistant. Respond ONLY with valid JSON using one of the supported actions.
 
@@ -53,10 +95,13 @@ Supported actions:
 - send_email_multi (supports multiple email recipients)
 - log_conversation
 - enhance_message (for making messages professional)
+- create_service_reminder (for vehicle/equipment service reminders)
+- update_service_reminder (for updating existing reminders)
+- complete_service_reminder (for marking service as completed)
 
 Each response must use this structure:
 {
-  "action": "create_task" | "create_appointment" | "send_message" | "send_message_multi" | "send_email" | "send_email_multi" | "log_conversation" | "enhance_message",
+  "action": "create_task" | "create_appointment" | "send_message" | "send_message_multi" | "send_email" | "send_email_multi" | "log_conversation" | "enhance_message" | "create_service_reminder" | "update_service_reminder" | "complete_service_reminder",
   "title": "...",               // for tasks, appointments, or email subject
   "due_date": "YYYY-MM-DDTHH:MM:SS", // or null
   "recipient": "Name, phone number, or email",    // for send_message/send_email (single recipient)
@@ -65,23 +110,37 @@ Each response must use this structure:
   "subject": "Email subject line",    // for email actions
   "original_message": "...",     // for enhance_message action
   "enhanced_message": "...",     // for enhance_message action
-  "notes": "Optional details or transcript" // for CRM logs
+  "notes": "Optional details or transcript", // for CRM logs
+  
+  // Service reminder specific fields
+  "service_type": "oil_change" | "tire_rotation" | "brake_inspection" | "air_filter" | "transmission" | "coolant" | "tune_up" | "inspection" | "registration" | "insurance" | "custom",
+  "vehicle_info": "Vehicle description (e.g., '2020 Honda Civic')",
+  "description": "Service description",
+  "due_mileage": 75000,  // Optional mileage when service is due
+  "current_mileage": 65000,  // Optional current vehicle mileage
+  "contact_method": "sms" | "email" | "both",
+  "contact_info": "Phone number or email for notifications",
+  "notification_days": 7,  // Days before due date to send reminder
+  "reminder_id": 123  // For update/complete actions
 }
 
-For send_message action:
-- If recipient looks like a phone number (starts with + or contains only digits), it will be sent as SMS
-- Otherwise it will be logged as a regular message
-- Phone numbers should be in E.164 format (e.g., +1234567890)
+For service reminders:
+- create_service_reminder: Creates a new service reminder
+- update_service_reminder: Updates existing reminder (requires reminder_id)
+- complete_service_reminder: Marks service as completed (requires reminder_id)
 
-For send_email action:
-- If recipient looks like an email (contains @), it will be sent as email
-- Email addresses should be valid format (user@domain.com)
-- Subject is optional, will auto-generate if not provided
-
-For send_message_multi and send_email_multi actions:
-- Recipients can be a mix of phone numbers, emails, and names
-- Phone numbers will receive SMS, emails will receive email, names will be logged
-- Message will be enhanced once and sent to all recipients
+Common service types:
+- oil_change: Oil change service
+- tire_rotation: Tire rotation/replacement
+- brake_inspection: Brake system check
+- air_filter: Air filter replacement
+- transmission: Transmission service
+- coolant: Coolant system service
+- tune_up: General tune-up
+- inspection: Vehicle inspection
+- registration: Vehicle registration renewal
+- insurance: Insurance renewal
+- custom: Custom service type
 
 Only include fields relevant to the action.
 Do not add extra commentary.
@@ -109,6 +168,401 @@ Message content: "{message_content}"
 
 Respond with ONLY the subject line, nothing else.
 """
+
+class ServiceReminderDB:
+    """SQLite database manager for service reminders"""
+    
+    def __init__(self, db_path="service_reminders.db"):
+        self.db_path = db_path
+        self.init_db()
+    
+    def init_db(self):
+        """Initialize the database with service reminders table"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('''
+                CREATE TABLE IF NOT EXISTS service_reminders (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    service_type TEXT NOT NULL,
+                    vehicle_info TEXT NOT NULL,
+                    description TEXT,
+                    due_date TEXT NOT NULL,
+                    due_mileage INTEGER,
+                    current_mileage INTEGER,
+                    contact_method TEXT DEFAULT 'sms',
+                    contact_info TEXT NOT NULL,
+                    notification_days INTEGER DEFAULT 7,
+                    status TEXT DEFAULT 'active',
+                    created_at TEXT NOT NULL,
+                    last_notified TEXT,
+                    notes TEXT,
+                    UNIQUE(service_type, vehicle_info, due_date)
+                )
+            ''')
+            conn.commit()
+            print("✅ Service reminders database initialized")
+        except Exception as e:
+            print(f"❌ Failed to initialize database: {e}")
+        finally:
+            conn.close()
+    
+    def create_reminder(self, reminder: ServiceReminder) -> Dict[str, Any]:
+        """Create a new service reminder"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            
+            # Set created_at if not provided
+            if not reminder.created_at:
+                reminder.created_at = datetime.now().isoformat()
+            
+            cursor.execute('''
+                INSERT INTO service_reminders 
+                (service_type, vehicle_info, description, due_date, due_mileage, 
+                 current_mileage, contact_method, contact_info, notification_days, 
+                 status, created_at, notes)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (
+                reminder.service_type, reminder.vehicle_info, reminder.description,
+                reminder.due_date, reminder.due_mileage, reminder.current_mileage,
+                reminder.contact_method, reminder.contact_info, reminder.notification_days,
+                reminder.status, reminder.created_at, reminder.notes
+            ))
+            
+            reminder.id = cursor.lastrowid
+            conn.commit()
+            
+            return {
+                "success": True,
+                "reminder_id": reminder.id,
+                "message": f"Service reminder created for {reminder.vehicle_info} - {reminder.service_type}"
+            }
+            
+        except sqlite3.IntegrityError:
+            return {
+                "success": False,
+                "error": "Duplicate reminder: A reminder for this service type, vehicle, and date already exists"
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to create reminder: {str(e)}"
+            }
+        finally:
+            conn.close()
+    
+    def get_reminder(self, reminder_id: int) -> Optional[ServiceReminder]:
+        """Get a specific reminder by ID"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM service_reminders WHERE id = ?', (reminder_id,))
+            row = cursor.fetchone()
+            
+            if row:
+                return ServiceReminder(
+                    id=row[0], service_type=row[1], vehicle_info=row[2], description=row[3],
+                    due_date=row[4], due_mileage=row[5], current_mileage=row[6],
+                    contact_method=row[7], contact_info=row[8], notification_days=row[9],
+                    status=row[10], created_at=row[11], last_notified=row[12], notes=row[13]
+                )
+            return None
+        finally:
+            conn.close()
+    
+    def update_reminder(self, reminder_id: int, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update an existing reminder"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            
+            # Build update query dynamically
+            set_clauses = []
+            values = []
+            
+            for field, value in updates.items():
+                if field != 'id':  # Don't allow updating ID
+                    set_clauses.append(f"{field} = ?")
+                    values.append(value)
+            
+            if not set_clauses:
+                return {"success": False, "error": "No valid fields to update"}
+            
+            values.append(reminder_id)
+            query = f"UPDATE service_reminders SET {', '.join(set_clauses)} WHERE id = ?"
+            
+            cursor.execute(query, values)
+            
+            if cursor.rowcount > 0:
+                conn.commit()
+                return {
+                    "success": True,
+                    "message": f"Reminder {reminder_id} updated successfully"
+                }
+            else:
+                return {
+                    "success": False,
+                    "error": f"Reminder {reminder_id} not found"
+                }
+                
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to update reminder: {str(e)}"
+            }
+        finally:
+            conn.close()
+    
+    def complete_reminder(self, reminder_id: int, completion_notes: str = "") -> Dict[str, Any]:
+        """Mark a reminder as completed"""
+        updates = {
+            "status": ReminderStatus.COMPLETED.value,
+            "notes": completion_notes
+        }
+        return self.update_reminder(reminder_id, updates)
+    
+    def get_due_reminders(self, days_ahead: int = 7) -> List[ServiceReminder]:
+        """Get reminders that are due within the specified days"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            
+            # Calculate the cutoff date
+            cutoff_date = (datetime.now() + timedelta(days=days_ahead)).isoformat()
+            
+            cursor.execute('''
+                SELECT * FROM service_reminders 
+                WHERE status = 'active' 
+                AND due_date <= ? 
+                ORDER BY due_date ASC
+            ''', (cutoff_date,))
+            
+            reminders = []
+            for row in cursor.fetchall():
+                reminders.append(ServiceReminder(
+                    id=row[0], service_type=row[1], vehicle_info=row[2], description=row[3],
+                    due_date=row[4], due_mileage=row[5], current_mileage=row[6],
+                    contact_method=row[7], contact_info=row[8], notification_days=row[9],
+                    status=row[10], created_at=row[11], last_notified=row[12], notes=row[13]
+                ))
+            
+            return reminders
+            
+        finally:
+            conn.close()
+    
+    def get_all_reminders(self, status_filter: str = None) -> List[ServiceReminder]:
+        """Get all reminders, optionally filtered by status"""
+        conn = sqlite3.connect(self.db_path)
+        try:
+            cursor = conn.cursor()
+            
+            if status_filter:
+                cursor.execute('SELECT * FROM service_reminders WHERE status = ? ORDER BY due_date ASC', (status_filter,))
+            else:
+                cursor.execute('SELECT * FROM service_reminders ORDER BY due_date ASC')
+            
+            reminders = []
+            for row in cursor.fetchall():
+                reminders.append(ServiceReminder(
+                    id=row[0], service_type=row[1], vehicle_info=row[2], description=row[3],
+                    due_date=row[4], due_mileage=row[5], current_mileage=row[6],
+                    contact_method=row[7], contact_info=row[8], notification_days=row[9],
+                    status=row[10], created_at=row[11], last_notified=row[12], notes=row[13]
+                ))
+            
+            return reminders
+            
+        finally:
+            conn.close()
+    
+    def mark_notified(self, reminder_id: int):
+        """Mark that a reminder notification was sent"""
+        updates = {"last_notified": datetime.now().isoformat()}
+        return self.update_reminder(reminder_id, updates)
+
+class ServiceReminderManager:
+    """Manager for service reminder notifications and background processing"""
+    
+    def __init__(self, db: ServiceReminderDB, twilio_client, email_client):
+        self.db = db
+        self.twilio_client = twilio_client
+        self.email_client = email_client
+        self.running = False
+        self.check_thread = None
+    
+    def start_background_checker(self):
+        """Start background thread to check for due reminders"""
+        if self.running:
+            return
+        
+        self.running = True
+        self.check_thread = threading.Thread(target=self._background_check_loop, daemon=True)
+        self.check_thread.start()
+        print("✅ Service reminder background checker started")
+    
+    def stop_background_checker(self):
+        """Stop background reminder checker"""
+        self.running = False
+        if self.check_thread:
+            self.check_thread.join()
+        print("🛑 Service reminder background checker stopped")
+    
+    def _background_check_loop(self):
+        """Background loop to check for due reminders every hour"""
+        while self.running:
+            try:
+                self.check_and_send_reminders()
+                # Wait 1 hour before next check
+                for _ in range(3600):  # 3600 seconds = 1 hour
+                    if not self.running:
+                        break
+                    time.sleep(1)
+            except Exception as e:
+                print(f"Error in reminder background check: {e}")
+                time.sleep(60)  # Wait 1 minute on error
+    
+    def check_and_send_reminders(self) -> Dict[str, Any]:
+        """Check for due reminders and send notifications"""
+        try:
+            # Get all due reminders
+            due_reminders = self.db.get_due_reminders(days_ahead=30)  # Check 30 days ahead
+            
+            sent_count = 0
+            failed_count = 0
+            results = []
+            
+            for reminder in due_reminders:
+                # Check if we should send notification based on notification_days
+                due_date = datetime.fromisoformat(reminder.due_date)
+                days_until_due = (due_date - datetime.now()).days
+                
+                # Only send if within notification window
+                if days_until_due <= reminder.notification_days:
+                    # Check if we already notified recently (don't spam)
+                    if reminder.last_notified:
+                        last_notified = datetime.fromisoformat(reminder.last_notified)
+                        hours_since_last = (datetime.now() - last_notified).total_seconds() / 3600
+                        
+                        # Don't send again within 24 hours
+                        if hours_since_last < 24:
+                            continue
+                    
+                    result = self.send_reminder_notification(reminder)
+                    results.append(result)
+                    
+                    if result.get('success'):
+                        sent_count += 1
+                        self.db.mark_notified(reminder.id)
+                    else:
+                        failed_count += 1
+            
+            return {
+                "success": True,
+                "due_reminders_found": len(due_reminders),
+                "notifications_sent": sent_count,
+                "failed_notifications": failed_count,
+                "results": results
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to check reminders: {str(e)}"
+            }
+    
+    def send_reminder_notification(self, reminder: ServiceReminder) -> Dict[str, Any]:
+        """Send notification for a specific reminder"""
+        try:
+            # Generate reminder message
+            message = self.generate_reminder_message(reminder)
+            
+            # Send based on contact method
+            if reminder.contact_method == "sms" and is_phone_number(reminder.contact_info):
+                result = self.twilio_client.send_sms(reminder.contact_info, message)
+                result['type'] = 'sms'
+                
+            elif reminder.contact_method == "email" and is_email_address(reminder.contact_info):
+                subject = f"Service Reminder: {reminder.service_type.replace('_', ' ').title()} - {reminder.vehicle_info}"
+                result = self.email_client.send_email(reminder.contact_info, subject, message)
+                result['type'] = 'email'
+                
+            elif reminder.contact_method == "both":
+                # Send both SMS and email
+                sms_result = None
+                email_result = None
+                
+                if is_phone_number(reminder.contact_info):
+                    sms_result = self.twilio_client.send_sms(reminder.contact_info, message)
+                
+                if is_email_address(reminder.contact_info):
+                    subject = f"Service Reminder: {reminder.service_type.replace('_', ' ').title()} - {reminder.vehicle_info}"
+                    email_result = self.email_client.send_email(reminder.contact_info, subject, message)
+                
+                # Return combined result
+                success = (sms_result and sms_result.get('success')) or (email_result and email_result.get('success'))
+                return {
+                    "success": success,
+                    "reminder_id": reminder.id,
+                    "sms_result": sms_result,
+                    "email_result": email_result,
+                    "type": "both"
+                }
+                
+            else:
+                return {
+                    "success": False,
+                    "error": f"Invalid contact method or contact info: {reminder.contact_method}, {reminder.contact_info}",
+                    "reminder_id": reminder.id
+                }
+            
+            result['reminder_id'] = reminder.id
+            return result
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": f"Failed to send reminder notification: {str(e)}",
+                "reminder_id": reminder.id
+            }
+    
+    def generate_reminder_message(self, reminder: ServiceReminder) -> str:
+        """Generate a professional reminder message"""
+        due_date = datetime.fromisoformat(reminder.due_date)
+        days_until_due = (due_date - datetime.now()).days
+        
+        service_name = reminder.service_type.replace('_', ' ').title()
+        
+        if days_until_due <= 0:
+            urgency = "🚨 OVERDUE"
+            time_msg = f"was due {abs(days_until_due)} days ago"
+        elif days_until_due <= 3:
+            urgency = "⚠️ URGENT"
+            time_msg = f"is due in {days_until_due} days"
+        else:
+            urgency = "📅 REMINDER"
+            time_msg = f"is due in {days_until_due} days"
+        
+        message = f"{urgency}: {service_name} for your {reminder.vehicle_info} {time_msg} ({due_date.strftime('%m/%d/%Y')})."
+        
+        if reminder.description:
+            message += f"\n\nService: {reminder.description}"
+        
+        if reminder.due_mileage and reminder.current_mileage:
+            miles_until = reminder.due_mileage - reminder.current_mileage
+            if miles_until > 0:
+                message += f"\n\nMileage: Due at {reminder.due_mileage:,} miles (current: {reminder.current_mileage:,}, {miles_until:,} miles remaining)"
+            else:
+                message += f"\n\nMileage: OVERDUE - Due at {reminder.due_mileage:,} miles (current: {reminder.current_mileage:,})"
+        
+        message += f"\n\nReminder ID: {reminder.id}"
+        message += "\n\nTo mark as completed, reply 'COMPLETED {reminder.id}' or use the web interface."
+        
+        return message
+
+# Initialize service reminder system
+service_db = ServiceReminderDB()
 
 class EmailClient:
     """SMTP Email client for sending emails with Network Solutions support"""
@@ -355,6 +809,9 @@ class TwilioClient:
 twilio_client = TwilioClient()
 email_client = EmailClient()
 
+# Initialize service reminder manager
+service_manager = ServiceReminderManager(service_db, twilio_client, email_client)
+
 def call_claude(prompt, use_enhancement_prompt=False, use_subject_prompt=False, original_message="", message_content=""):
     """Call Claude API with different prompts based on use case"""
     try:
@@ -438,7 +895,7 @@ def is_phone_number(recipient: str) -> bool:
 def is_email_address(recipient: str) -> bool:
     """Check if recipient looks like an email address"""
     # Simple email validation
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
     return bool(re.match(email_pattern, recipient.strip()))
 
 def format_phone_number(phone: str) -> str:
@@ -480,6 +937,149 @@ def clean_voice_message(message: str) -> str:
     message = message.replace(" period", ".").replace(" comma", ",")
     message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
     return message.strip()
+
+def extract_service_reminder_command(text: str) -> Dict[str, Any]:
+    """Extract service reminder command from voice input"""
+    # Common patterns for service reminder commands
+    patterns = [
+        # "Remind me to change oil on my 2020 Honda Civic on December 15th"
+        r'remind me to (.+?) (?:on|for) my (.+?) (?:on|by) (.+)',
+        # "Set a reminder for oil change on my Honda at 75000 miles"
+        r'set (?:a )?reminder for (.+?) (?:on|for) my (.+?) at (\d+) miles',
+        # "Schedule oil change for December 15th for my Honda Civic"
+        r'schedule (.+?) for (.+?) for my (.+)',
+        # "Create service reminder for brake inspection on my car due January 1st"
+        r'create (?:service )?reminder for (.+?) (?:on|for) my (.+?) due (.+)',
+        # "Add oil change reminder for my Honda Civic due in 3 months"
+        r'add (.+?) reminder for my (.+?) due (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) >= 3:
+                service_desc = groups[0].strip()
+                vehicle_info = groups[1].strip()
+                due_info = groups[2].strip()
+                
+                # Determine service type from description
+                service_type = determine_service_type(service_desc)
+                
+                # Parse due date
+                due_date = parse_due_date(due_info)
+                
+                return {
+                    "action": "create_service_reminder",
+                    "service_type": service_type,
+                    "vehicle_info": vehicle_info,
+                    "description": service_desc,
+                    "due_date": due_date,
+                    "contact_method": "sms",  # Default
+                    "contact_info": "",  # Will be filled from user profile
+                    "notification_days": 7
+                }
+    
+    return None
+
+def determine_service_type(description: str) -> str:
+    """Determine service type from description"""
+    desc_lower = description.lower()
+    
+    service_mappings = {
+        "oil": ServiceType.OIL_CHANGE.value,
+        "tire": ServiceType.TIRE_ROTATION.value,
+        "brake": ServiceType.BRAKE_INSPECTION.value,
+        "air filter": ServiceType.AIR_FILTER.value,
+        "transmission": ServiceType.TRANSMISSION.value,
+        "coolant": ServiceType.COOLANT.value,
+        "tune": ServiceType.TUNE_UP.value,
+        "inspection": ServiceType.INSPECTION.value,
+        "registration": ServiceType.REGISTRATION.value,
+        "insurance": ServiceType.INSURANCE.value,
+    }
+    
+    for keyword, service_type in service_mappings.items():
+        if keyword in desc_lower:
+            return service_type
+    
+    return ServiceType.CUSTOM.value
+
+def parse_due_date(due_info: str) -> str:
+    """Parse due date from various formats"""
+    due_info = due_info.lower().strip()
+    
+    try:
+        # Handle relative dates
+        if "month" in due_info:
+            if "in" in due_info:
+                # "in 3 months"
+                months = re.search(r'(\d+)', due_info)
+                if months:
+                    months_count = int(months.group(1))
+                    future_date = datetime.now() + timedelta(days=months_count * 30)
+                    return future_date.isoformat()
+        
+        if "week" in due_info:
+            if "in" in due_info:
+                # "in 2 weeks"
+                weeks = re.search(r'(\d+)', due_info)
+                if weeks:
+                    weeks_count = int(weeks.group(1))
+                    future_date = datetime.now() + timedelta(weeks=weeks_count)
+                    return future_date.isoformat()
+        
+        if "day" in due_info:
+            if "in" in due_info:
+                # "in 10 days"
+                days = re.search(r'(\d+)', due_info)
+                if days:
+                    days_count = int(days.group(1))
+                    future_date = datetime.now() + timedelta(days=days_count)
+                    return future_date.isoformat()
+        
+        # Handle specific date formats
+        # Try to parse common date formats
+        date_patterns = [
+            r'(\d{1,2})/(\d{1,2})/(\d{4})',  # MM/DD/YYYY
+            r'(\d{1,2})-(\d{1,2})-(\d{4})',  # MM-DD-YYYY
+            r'(\w+) (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})?',  # Month DD, YYYY
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, due_info)
+            if match:
+                groups = match.groups()
+                if len(groups) == 3:
+                    if groups[0].isdigit():  # MM/DD/YYYY format
+                        month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
+                    else:  # Month name format
+                        month_name = groups[0].capitalize()
+                        day = int(groups[1])
+                        year = int(groups[2]) if groups[2] else datetime.now().year
+                        
+                        month_map = {
+                            'January': 1, 'February': 2, 'March': 3, 'April': 4,
+                            'May': 5, 'June': 6, 'July': 7, 'August': 8,
+                            'September': 9, 'October': 10, 'November': 11, 'December': 12
+                        }
+                        month = month_map.get(month_name, 1)
+                    
+                    parsed_date = datetime(year, month, day)
+                    return parsed_date.isoformat()
+        
+        # Default to 30 days from now if parsing fails
+        default_date = datetime.now() + timedelta(days=30)
+        return default_date.isoformat()
+        
+    except Exception as e:
+        print(f"Error parsing due date '{due_info}': {e}")
+        # Default to 30 days from now
+        default_date = datetime.now() + timedelta(days=30)
+        return default_date.isoformat()
 
 def extract_email_command(text: str) -> Dict[str, Any]:
     """Extract email command from voice input"""
@@ -890,6 +1490,150 @@ def handle_create_appointment(data):
     print("[CMP] Creating appointment:", data.get("title"), data.get("due_date"))
     return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
 
+def handle_create_service_reminder(data):
+    """Handle creating a new service reminder"""
+    try:
+        reminder = ServiceReminder(
+            service_type=data.get("service_type", ServiceType.CUSTOM.value),
+            vehicle_info=data.get("vehicle_info", ""),
+            description=data.get("description", ""),
+            due_date=data.get("due_date", ""),
+            due_mileage=data.get("due_mileage"),
+            current_mileage=data.get("current_mileage"),
+            contact_method=data.get("contact_method", "sms"),
+            contact_info=data.get("contact_info", ""),
+            notification_days=data.get("notification_days", 7),
+            notes=data.get("notes", "")
+        )
+        
+        # Validate required fields
+        if not reminder.vehicle_info:
+            return "❌ Vehicle information is required for service reminders"
+        
+        if not reminder.due_date:
+            return "❌ Due date is required for service reminders"
+        
+        if not reminder.contact_info:
+            return "❌ Contact information is required for notifications"
+        
+        # Create the reminder
+        result = service_db.create_reminder(reminder)
+        
+        if result["success"]:
+            service_name = reminder.service_type.replace('_', ' ').title()
+            due_date_formatted = datetime.fromisoformat(reminder.due_date).strftime('%m/%d/%Y')
+            
+            response = f"✅ Service reminder created!\n\n"
+            response += f"🚗 Vehicle: {reminder.vehicle_info}\n"
+            response += f"🔧 Service: {service_name}\n"
+            response += f"📅 Due Date: {due_date_formatted}\n"
+            response += f"📱 Notifications: {reminder.contact_method} to {reminder.contact_info}\n"
+            response += f"⏰ Reminder: {reminder.notification_days} days before due date\n"
+            response += f"🆔 Reminder ID: {result['reminder_id']}\n"
+            
+            if reminder.description:
+                response += f"📋 Description: {reminder.description}\n"
+            
+            if reminder.due_mileage:
+                response += f"🛣️ Due at: {reminder.due_mileage:,} miles\n"
+                if reminder.current_mileage:
+                    miles_remaining = reminder.due_mileage - reminder.current_mileage
+                    response += f"📊 Current: {reminder.current_mileage:,} miles ({miles_remaining:,} remaining)\n"
+            
+            return response
+        else:
+            return f"❌ Failed to create service reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error creating service reminder: {str(e)}"
+
+def handle_update_service_reminder(data):
+    """Handle updating an existing service reminder"""
+    try:
+        reminder_id = data.get("reminder_id")
+        if not reminder_id:
+            return "❌ Reminder ID is required for updates"
+        
+        # Build updates dictionary
+        updates = {}
+        
+        # Map of data fields to database fields
+        update_fields = [
+            "service_type", "vehicle_info", "description", "due_date",
+            "due_mileage", "current_mileage", "contact_method", 
+            "contact_info", "notification_days", "notes"
+        ]
+        
+        for field in update_fields:
+            if field in data and data[field] is not None:
+                updates[field] = data[field]
+        
+        if not updates:
+            return "❌ No updates specified"
+        
+        result = service_db.update_reminder(reminder_id, updates)
+        
+        if result["success"]:
+            response = f"✅ Service reminder #{reminder_id} updated successfully!\n\n"
+            response += "📝 Updated fields:\n"
+            
+            for field, value in updates.items():
+                field_name = field.replace('_', ' ').title()
+                if field == "due_date" and value:
+                    try:
+                        formatted_date = datetime.fromisoformat(value).strftime('%m/%d/%Y')
+                        response += f"• {field_name}: {formatted_date}\n"
+                    except:
+                        response += f"• {field_name}: {value}\n"
+                elif field == "service_type":
+                    service_name = value.replace('_', ' ').title()
+                    response += f"• {field_name}: {service_name}\n"
+                elif field in ["due_mileage", "current_mileage"] and value:
+                    response += f"• {field_name}: {value:,} miles\n"
+                else:
+                    response += f"• {field_name}: {value}\n"
+            
+            return response
+        else:
+            return f"❌ Failed to update reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error updating service reminder: {str(e)}"
+
+def handle_complete_service_reminder(data):
+    """Handle marking a service reminder as completed"""
+    try:
+        reminder_id = data.get("reminder_id")
+        if not reminder_id:
+            return "❌ Reminder ID is required to mark as completed"
+        
+        completion_notes = data.get("notes", f"Service completed on {datetime.now().strftime('%m/%d/%Y')}")
+        
+        # Get reminder details before completing
+        reminder = service_db.get_reminder(reminder_id)
+        if not reminder:
+            return f"❌ Service reminder #{reminder_id} not found"
+        
+        result = service_db.complete_reminder(reminder_id, completion_notes)
+        
+        if result["success"]:
+            service_name = reminder.service_type.replace('_', ' ').title()
+            
+            response = f"✅ Service reminder completed!\n\n"
+            response += f"🚗 Vehicle: {reminder.vehicle_info}\n"
+            response += f"🔧 Service: {service_name}\n"
+            response += f"📅 Was Due: {datetime.fromisoformat(reminder.due_date).strftime('%m/%d/%Y')}\n"
+            response += f"✅ Completed: {datetime.now().strftime('%m/%d/%Y')}\n"
+            response += f"📝 Notes: {completion_notes}\n"
+            response += f"🆔 Reminder ID: {reminder_id}"
+            
+            return response
+        else:
+            return f"❌ Failed to complete reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error completing service reminder: {str(e)}"
+
 def handle_send_message(data):
     recipient = data.get("recipient", "")
     message = data.get("message", "")
@@ -1040,7 +1784,7 @@ def handle_log_conversation(data):
     return "Conversation log saved."
 
 def dispatch_action(parsed):
-    """Enhanced dispatch function with email and multi-recipient support"""
+    """Enhanced dispatch function with email, multi-recipient, and service reminder support"""
     action = parsed.get("action")
     if action == "create_task":
         return handle_create_task(parsed)
@@ -1054,6 +1798,12 @@ def dispatch_action(parsed):
         return handle_send_email(parsed)
     elif action == "send_email_multi":
         return handle_send_email_multi(parsed)
+    elif action == "create_service_reminder":
+        return handle_create_service_reminder(parsed)
+    elif action == "update_service_reminder":
+        return handle_update_service_reminder(parsed)
+    elif action == "complete_service_reminder":
+        return handle_complete_service_reminder(parsed)
     elif action == "log_conversation":
         return handle_log_conversation(parsed)
     else:
@@ -1065,7 +1815,7 @@ def manifest():
     return jsonify({
         "name": "Smart AI Agent",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with professional voice SMS & Email",
+        "description": "AI-powered task and appointment manager with professional voice SMS, Email & Service Reminders",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -1422,33 +2172,35 @@ HTML_TEMPLATE = """
 <body>
   <div class="container">
     <h1>Smart AI Agent</h1>
-    <div class="subtitle">Speak naturally - AI handles SMS & Email professionally</div>
-    <div class="feature-badge">✨ Multi-Recipient Auto-Enhanced Messages & Emails</div>
+    <div class="subtitle">Speak naturally - AI handles SMS, Email & Service Reminders</div>
+    <div class="feature-badge">✨ Multi-Recipient Messages, Emails & Service Reminders</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try: 'Text John saying hello' or 'Email john@example.com saying meeting at 3pm'" />
+        <input type="text" id="command" placeholder="Try messaging, emailing, or 'Remind me to change oil on my Honda on Dec 15th'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send professional messages and emails! 
+      <div class="response-text" id="response">🎯 Ready to send messages, emails & manage service reminders! 
 
 📱 SMS Examples:
 • "Text 8136414177 saying hey how are you"
 • "Text John and Mary saying the meeting moved to 3pm"
 
 📧 Email Examples:
-• "Email john@example.com saying the meeting is at 3pm"
-• "Email john@example.com with subject meeting update saying the time changed"
 • "Email john@example.com and mary@example.com saying hello everyone"
+
+🔧 Service Reminder Examples:
+• "Remind me to change oil on my 2020 Honda Civic on December 15th"
+• "Set a reminder for brake inspection on my car due in 3 months"
+• "Schedule tire rotation for my Honda at 75000 miles"
 
 🔄 Mixed Examples:
 • "Send a message to 8136414177 and john@example.com saying hello"
 • "Message Mom and dad@example.com that I'll be home late"
 
-Use the microphone button below or type your command.</div>
     </div>
 
     <div class="voice-controls">
@@ -1471,7 +2223,7 @@ Use the microphone button below or type your command.</div>
     let isRecording = false;
     let voiceSupported = false;
 
-    // Initialize speech recognition (ORIGINAL MOBILE-WORKING VERSION)
+    // Initialize speech recognition
     function initSpeechRecognition() {
       if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -1570,7 +2322,7 @@ Use the microphone button below or type your command.</div>
     function stopRecording() {
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try: "Text John saying hello" or "Email john@example.com saying meeting at 3pm"';
+      document.getElementById('command').placeholder = 'Try messaging, emailing, or "Remind me to change oil on my Honda on Dec 15th"';
       
       if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
         document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
@@ -1616,7 +2368,7 @@ Use the microphone button below or type your command.</div>
         return;
       }
 
-      output.textContent = "Processing with AI and enhancing message...";
+      output.textContent = "Processing with AI...";
 
       fetch("/execute", {
         method: "POST",
@@ -1678,14 +2430,25 @@ Use the microphone button below or type your command.</div>
 def root():
     return HTML_TEMPLATE
 
-# Enhanced execute route with email support
+# Enhanced execute route with service reminder support
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
         
-        # FIRST: Try email commands
+        # FIRST: Try service reminder commands
+        service_command = extract_service_reminder_command(prompt)
+        
+        if service_command:
+            print(f"[VOICE SERVICE] Detected service reminder command: {service_command}")
+            dispatch_result = handle_create_service_reminder(service_command)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": service_command
+            })
+        
+        # SECOND: Try email commands
         email_command = extract_email_command(prompt)
         
         if email_command:
@@ -1696,7 +2459,7 @@ def execute():
                 "claude_output": email_command
             })
         
-        # SECOND: Try multi-recipient email commands
+        # THIRD: Try multi-recipient email commands
         multi_email_command = extract_email_command_multi(prompt)
         
         if multi_email_command:
@@ -1710,7 +2473,7 @@ def execute():
                 "claude_output": multi_email_command
             })
         
-        # THIRD: Try the original SMS command (this was working on mobile before)
+        # FOURTH: Try the original SMS command
         sms_command = extract_sms_command(prompt)
         
         if sms_command:
@@ -1721,7 +2484,7 @@ def execute():
                 "claude_output": sms_command
             })
         
-        # FOURTH: Try multi-recipient SMS
+        # FIFTH: Try multi-recipient SMS
         multi_sms_command = extract_sms_command_multi(prompt)
         
         if multi_sms_command:
@@ -1735,7 +2498,7 @@ def execute():
                 "claude_output": multi_sms_command
             })
         
-        # FIFTH: Check for mixed message commands (phone numbers and emails together)
+        # SIXTH: Check for mixed message commands (phone numbers and emails together)
         if "message" in prompt.lower() or "send" in prompt.lower():
             # Look for patterns that might contain both phones and emails
             mixed_patterns = [
@@ -1792,7 +2555,7 @@ def execute():
                                 }
                             })
         
-        # SIXTH: Fall back to Claude for other commands
+        # SEVENTH: Fall back to Claude for other commands
         result = call_claude(prompt)
         
         if "error" in result:
@@ -1818,10 +2581,138 @@ def health_check():
         "twilio_status": twilio_status,
         "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
+        "service_reminders_enabled": True,
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
         "email_address": CONFIG["email_address"] if CONFIG["email_address"] else "not set",
-        "features": ["voice_sms", "voice_email", "multi_recipient_sms", "multi_recipient_email", "mixed_messaging", "message_enhancement", "professional_formatting", "auto_subject_generation"]
+        "features": ["voice_sms", "voice_email", "multi_recipient_sms", "multi_recipient_email", "mixed_messaging", "message_enhancement", "professional_formatting", "auto_subject_generation", "service_reminders", "reminder_notifications", "background_reminder_checker"]
     })
+
+# Service Reminder API Endpoints
+
+@app.route('/reminders', methods=['GET'])
+def get_reminders():
+    """Get all service reminders with optional status filter"""
+    status_filter = request.args.get('status')
+    reminders = service_db.get_all_reminders(status_filter)
+    
+    # Convert to dictionaries for JSON response
+    reminders_data = [asdict(reminder) for reminder in reminders]
+    
+    return jsonify({
+        "success": True,
+        "count": len(reminders),
+        "reminders": reminders_data
+    })
+
+@app.route('/reminders', methods=['POST'])
+def create_reminder():
+    """Create a new service reminder"""
+    data = request.json
+    
+    try:
+        reminder = ServiceReminder(
+            service_type=data.get("service_type", ServiceType.CUSTOM.value),
+            vehicle_info=data.get("vehicle_info", ""),
+            description=data.get("description", ""),
+            due_date=data.get("due_date", ""),
+            due_mileage=data.get("due_mileage"),
+            current_mileage=data.get("current_mileage"),
+            contact_method=data.get("contact_method", "sms"),
+            contact_info=data.get("contact_info", ""),
+            notification_days=data.get("notification_days", 7),
+            notes=data.get("notes", "")
+        )
+        
+        result = service_db.create_reminder(reminder)
+        return jsonify(result)
+        
+    except Exception as e:
+        return jsonify({
+            "success": False,
+            "error": f"Failed to create reminder: {str(e)}"
+        }), 400
+
+@app.route('/reminders/<int:reminder_id>', methods=['GET'])
+def get_reminder(reminder_id):
+    """Get a specific reminder by ID"""
+    reminder = service_db.get_reminder(reminder_id)
+    
+    if reminder:
+        return jsonify({
+            "success": True,
+            "reminder": asdict(reminder)
+        })
+    else:
+        return jsonify({
+            "success": False,
+            "error": "Reminder not found"
+        }), 404
+
+@app.route('/reminders/<int:reminder_id>', methods=['PUT'])
+def update_reminder(reminder_id):
+    """Update an existing reminder"""
+    data = request.json
+    result = service_db.update_reminder(reminder_id, data)
+    
+    if result["success"]:
+        return jsonify(result)
+    else:
+        return jsonify(result), 400
+
+@app.route('/reminders/<int:reminder_id>/complete', methods=['POST'])
+def complete_reminder(reminder_id):
+    """Mark a reminder as completed"""
+    data = request.json
+    completion_notes = data.get("notes", f"Service completed on {datetime.now().strftime('%m/%d/%Y')}")
+    
+    result = service_db.complete_reminder(reminder_id, completion_notes)
+    
+    if result["success"]:
+        return jsonify(result)
+    else:
+        return jsonify(result), 400
+
+@app.route('/reminders/due', methods=['GET'])
+def get_due_reminders():
+    """Get reminders that are due soon"""
+    days_ahead = int(request.args.get('days', 7))
+    reminders = service_db.get_due_reminders(days_ahead)
+    
+    # Convert to dictionaries for JSON response
+    reminders_data = [asdict(reminder) for reminder in reminders]
+    
+    return jsonify({
+        "success": True,
+        "count": len(reminders),
+        "days_ahead": days_ahead,
+        "reminders": reminders_data
+    })
+
+@app.route('/reminders/check', methods=['POST'])
+def check_reminders():
+    """Manually trigger reminder check and send notifications"""
+    result = service_manager.check_and_send_reminders()
+    return jsonify(result)
+
+@app.route('/reminders/<int:reminder_id>/notify', methods=['POST'])
+def send_reminder_notification(reminder_id):
+    """Send notification for a specific reminder"""
+    reminder = service_db.get_reminder(reminder_id)
+    
+    if not reminder:
+        return jsonify({
+            "success": False,
+            "error": "Reminder not found"
+        }), 404
+    
+    result = service_manager.send_reminder_notification(reminder)
+    
+    if result.get('success'):
+        service_db.mark_notified(reminder_id)
+    
+    return jsonify(result)
+
+# Original test endpoints (keeping for backward compatibility)
 
 @app.route('/test_sms', methods=['POST'])
 def test_sms():
@@ -1988,12 +2879,17 @@ def email_info():
     return jsonify(result)
 
 if __name__ == '__main__':
-    print("🚀 Starting Enhanced Smart AI Agent Flask App with SMS & Email Support")
+    print("🚀 Starting Enhanced Smart AI Agent Flask App with SMS, Email & Service Reminders")
     print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
     print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
     print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print("✨ Features: Multi-Recipient SMS, Multi-Recipient Email, Mixed Messaging, Professional Voice Processing, Message Enhancement, Auto-Subject Generation")
-    print("🔧 Execution order: Email → Multi-Email → SMS → Multi-SMS → Mixed → Claude fallback")
+    print(f"🔧 Service Reminders: ✅ Enabled (SQLite Database)")
+    print("✨ Features: Multi-Recipient SMS, Multi-Recipient Email, Mixed Messaging, Professional Voice Processing, Message Enhancement, Auto-Subject Generation, Service Reminders, Background Notifications")
+    print("🔧 Execution order: Service Reminders → Email → Multi-Email → SMS → Multi-SMS → Mixed → Claude fallback")
+    
+    # Start background reminder checker
+    service_manager.start_background_checker()
+    
     print("\\n📋 Voice Command Examples:")
     print("  📱 SMS Commands:")
     print("    • 'Text 8136414177 saying hey how are you'")
@@ -2003,6 +2899,10 @@ if __name__ == '__main__':
     print("    • 'Email john@example.com saying the meeting is at 3pm'")
     print("    • 'Email john@example.com with subject meeting update saying the time changed'")
     print("    • 'Email john@example.com and mary@example.com saying hello everyone'")
+    print("  🔧 Service Reminder Commands:")
+    print("    • 'Remind me to change oil on my 2020 Honda Civic on December 15th'")
+    print("    • 'Set a reminder for brake inspection on my car due in 3 months'")
+    print("    • 'Schedule tire rotation for my Honda at 75000 miles'")
     print("  🔄 Mixed Commands:")
     print("    • 'Send a message to 8136414177 and john@example.com saying hello'")
     print("    • 'Message Mom and dad@example.com that I'll be home late'")
@@ -2019,6 +2919,19 @@ if __name__ == '__main__':
     print("  SMTP_SERVER=mail.networksolutions.com (optional, auto-configured)")
     print("  SMTP_PORT=587 (optional, auto-configured)")
     print("  EMAIL_NAME=Your Name (optional, defaults to 'Smart AI Agent')")
+    
+    print("\\n🔧 Service Reminder API Endpoints:")
+    print("  GET /reminders - Get all reminders")
+    print("  POST /reminders - Create new reminder")
+    print("  GET /reminders/<id> - Get specific reminder")
+    print("  PUT /reminders/<id> - Update reminder")
+    print("  POST /reminders/<id>/complete - Mark as completed")
+    print("  GET /reminders/due - Get due reminders")
+    print("  POST /reminders/check - Manually check and send notifications")
+    print("  POST /reminders/<id>/notify - Send notification for specific reminder")
+    
+    port = int(os.environ.get("PORT", 10000))
+    
     print("\\n📧 Network Solutions Email Setup:")
     print("  - Use your full email address (user@yourdomain.com) as EMAIL_ADDRESS")
     print("  - Use your email account password (not cPanel password)")
@@ -2027,5 +2940,16 @@ if __name__ == '__main__':
     print("  - Alternative: mail.yourdomain.com:587 (replace yourdomain.com)")
     print("  - Test connection with: curl http://localhost:10000/email_info")
     
+    print("\\n🔧 Service Reminder Background Checker:")
+    print("  - Checks for due reminders every hour")
+    print("  - Sends notifications based on notification_days setting")
+    print("  - Prevents spam with 24-hour notification cooldown")
+    print("  - Database: service_reminders.db (SQLite)")
+    
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    
+    try:
+        app.run(host="0.0.0.0", port=port, debug=True)
+   finally:
+        # Stop background reminder checker when app shuts down
+        service_manager.stop_background_checker()

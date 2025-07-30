@@ -1,4 +1,5 @@
-# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing + Service Reminders
+
+# Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing + Service Reminders + WAKE WORD ACTIVATION
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -45,6 +46,18 @@ CONFIG = {
     "email_name": os.getenv("EMAIL_NAME", "Smart AI Agent"),
     "email_provider": os.getenv("EMAIL_PROVIDER", "networksolutions").lower(),
 }
+
+# ==================== WAKE WORD CONFIGURATION ====================
+CONFIG.update({
+    "wake_words": os.getenv("WAKE_WORDS", "hey ringly,ringly,hey ring,ring").split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
+    "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
+    "wake_word_case_sensitive": os.getenv("WAKE_WORD_CASE_SENSITIVE", "false").lower() == "true",
+})
+
+print(f"🎙️ Wake words configured: {CONFIG['wake_words']}")
+print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
+print(f"🔘 Wake word enabled: {CONFIG['wake_word_enabled']}")
 
 # Service Reminder Enums and Data Classes
 class ServiceType(Enum):
@@ -576,6 +589,215 @@ class ServiceReminderManager:
         
         return message
 
+# ==================== WAKE WORD PROCESSOR CLASS ====================
+
+class WakeWordProcessor:
+    """Wake word detection and processing system for voice commands"""
+    
+    def __init__(self):
+        self.wake_words = CONFIG["wake_words"]
+        self.primary_wake_word = CONFIG["wake_word_primary"]
+        self.enabled = CONFIG["wake_word_enabled"]
+        self.case_sensitive = CONFIG["wake_word_case_sensitive"]
+        
+        print(f"🎙️ WakeWordProcessor initialized with {len(self.wake_words)} wake words")
+    
+    def detect_wake_word(self, text: str) -> Dict[str, Any]:
+        """
+        Detect wake word in text and return processed information
+        
+        Returns:
+        {
+            "has_wake_word": bool,
+            "wake_word_detected": str,
+            "command_text": str,  # Text after wake word
+            "original_text": str,
+            "confidence": float
+        }
+        """
+        original_text = text.strip()
+        
+        print(f"[WAKE WORD] Checking: '{original_text[:50]}{'...' if len(original_text) > 50 else ''}'")
+        
+        if not self.enabled:
+            print("[WAKE WORD] Detection disabled, processing as command")
+            return {
+                "has_wake_word": True,
+                "wake_word_detected": "disabled",
+                "command_text": original_text,
+                "original_text": original_text,
+                "confidence": 1.0
+            }
+        
+        # Prepare text for comparison
+        search_text = original_text if self.case_sensitive else original_text.lower()
+        
+        # Check each wake word
+        for wake_word in self.wake_words:
+            compare_word = wake_word if self.case_sensitive else wake_word.lower()
+            
+            # Exact match at beginning
+            if search_text.startswith(compare_word):
+                # Check if followed by space, punctuation, or end of string
+                next_char_index = len(compare_word)
+                if (next_char_index >= len(search_text) or 
+                    search_text[next_char_index] in [' ', ',', ':', ';', '!', '?', '.']):
+                    
+                    # Extract command text (everything after wake word)
+                    command_text = original_text[len(wake_word):].strip()
+                    
+                    # Remove common punctuation after wake word
+                    command_text = re.sub(r'^[,:;!?.]\s*', '', command_text)
+                    
+                    confidence = self._calculate_confidence(wake_word, command_text)
+                    
+                    print(f"[WAKE WORD] ✅ Detected: '{wake_word}' | Command: '{command_text[:30]}...' | Confidence: {confidence:.2f}")
+                    
+                    return {
+                        "has_wake_word": True,
+                        "wake_word_detected": wake_word,
+                        "command_text": command_text,
+                        "original_text": original_text,
+                        "confidence": confidence
+                    }
+        
+        # No wake word detected
+        print(f"[WAKE WORD] ❌ No wake word detected in: '{original_text[:30]}...'")
+        return {
+            "has_wake_word": False,
+            "wake_word_detected": None,
+            "command_text": original_text,
+            "original_text": original_text,
+            "confidence": 0.0
+        }
+    
+    def _calculate_confidence(self, detected_wake_word: str, command_text: str) -> float:
+        """Calculate confidence score for wake word detection"""
+        confidence = 0.8  # Base confidence for exact match
+        
+        # Boost confidence for primary wake word
+        if detected_wake_word.lower() == self.primary_wake_word.lower():
+            confidence += 0.1
+        
+        # Boost confidence if command text looks valid
+        if len(command_text.strip()) > 5:
+            confidence += 0.1
+        
+        # Reduce confidence for very short commands
+        if len(command_text.strip()) < 3:
+            confidence -= 0.2
+        
+        return min(1.0, max(0.0, confidence))
+    
+    def process_wake_word_command(self, text: str) -> Dict[str, Any]:
+        """
+        Process text with wake word detection and extract command
+        Returns the command result or wake word validation error
+        """
+        print(f"[WAKE WORD] Processing command: '{text[:100]}{'...' if len(text) > 100 else ''}'")
+        
+        # Detect wake word
+        wake_result = self.detect_wake_word(text)
+        
+        if not wake_result["has_wake_word"]:
+            print(f"[WAKE WORD] Command rejected - no wake word detected")
+            return {
+                "success": False,
+                "error": f"Please start your command with '{self.primary_wake_word}'. For example: '{self.primary_wake_word}: text John saying hello'",
+                "wake_word_required": True,
+                "suggested_wake_words": self.wake_words
+            }
+        
+        command_text = wake_result["command_text"]
+        
+        if not command_text.strip():
+            print("[WAKE WORD] Command rejected - no command after wake word")
+            return {
+                "success": False,
+                "error": f"Please provide a command after '{wake_result['wake_word_detected']}'. For example: '{self.primary_wake_word}: text John saying hello'",
+                "wake_word_detected": wake_result["wake_word_detected"]
+            }
+        
+        # Process the command using existing extraction functions
+        print(f"[WAKE WORD] Processing command: '{command_text}' (confidence: {wake_result['confidence']:.2f})")
+        
+        # Try different command extraction functions in priority order
+        command_result = None
+        
+        # 1. Try service reminder commands first (most specific)
+        command_result = extract_service_reminder_command(command_text)
+        if command_result:
+            print("[WAKE WORD] ✅ Service reminder command extracted")
+            command_result["wake_word_info"] = wake_result
+            return command_result
+        
+        # 2. Try multi-recipient SMS commands
+        command_result = extract_sms_command_multi(command_text)
+        if command_result:
+            print("[WAKE WORD] ✅ Multi-SMS command extracted")
+            command_result["wake_word_info"] = wake_result
+            return command_result
+        
+        # 3. Try multi-recipient email commands
+        command_result = extract_email_command_multi(command_text)
+        if command_result:
+            print("[WAKE WORD] ✅ Multi-email command extracted")
+            command_result["wake_word_info"] = wake_result
+            return command_result
+        
+        # 4. Try single SMS commands
+        command_result = extract_sms_command(command_text)
+        if command_result:
+            print("[WAKE WORD] ✅ Single SMS command extracted")
+            command_result["wake_word_info"] = wake_result
+            return command_result
+        
+        # 5. Try single email commands
+        command_result = extract_email_command(command_text)
+        if command_result:
+            print("[WAKE WORD] ✅ Single email command extracted")
+            command_result["wake_word_info"] = wake_result
+            return command_result
+        
+        # 6. Fall back to Claude AI for general command processing
+        print("[WAKE WORD] 🤖 Falling back to Claude AI for command processing")
+        try:
+            claude_result = call_claude(command_text)
+            if claude_result and "error" not in claude_result:
+                print("[WAKE WORD] ✅ Claude AI command processed")
+                claude_result["wake_word_info"] = wake_result
+                return claude_result
+        except Exception as e:
+            print(f"[WAKE WORD] Claude AI processing failed: {e}")
+        
+        # No command pattern matched
+        print(f"[WAKE WORD] ❌ No command pattern matched for: '{command_text}'")
+        return {
+            "success": False,
+            "error": f"I didn't understand the command: '{command_text}'. Try commands like:\n"
+                    f"• '{self.primary_wake_word}: text John saying hello'\n"
+                    f"• '{self.primary_wake_word}: email john@email.com saying meeting at 3pm'\n"
+                    f"• '{self.primary_wake_word}: remind me to change oil on my Honda on December 15th'",
+            "wake_word_detected": wake_result["wake_word_detected"],
+            "unrecognized_command": command_text,
+            "available_patterns": [
+                "text/message [recipient] saying [message]",
+                "email [recipient] saying [message]", 
+                "remind me to [service] on my [vehicle] on [date]"
+            ]
+        }
+    
+    def get_wake_word_examples(self) -> List[str]:
+        """Get example commands with wake words"""
+        return [
+            f"{self.primary_wake_word}: text John saying the meeting is at 3pm",
+            f"{self.primary_wake_word}: email team@company.com saying project update",
+            f"{self.primary_wake_word}: send message to John and Mary saying we're running late",
+            f"{self.primary_wake_word}: email john@email.com and mary@email.com saying hello everyone",
+            f"{self.primary_wake_word}: remind me to change oil on my Honda Civic on December 15th",
+            f"{self.primary_wake_word}: set reminder for brake inspection on my car at 75000 miles"
+        ]
+
 # Initialize service reminder system
 service_db = ServiceReminderDB()
 
@@ -824,6 +1046,10 @@ class TwilioClient:
 twilio_client = TwilioClient()
 email_client = EmailClient()
 
+# ==================== INITIALIZE WAKE WORD PROCESSOR ====================
+print("🎙️ Initializing wake word processor")
+wake_word_processor = WakeWordProcessor()
+
 # Initialize service reminder manager
 service_manager = ServiceReminderManager(service_db, twilio_client, email_client)
 
@@ -910,7 +1136,7 @@ def is_phone_number(recipient: str) -> bool:
 def is_email_address(recipient: str) -> bool:
     """Check if recipient looks like an email address"""
     # Simple email validation
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return bool(re.match(email_pattern, recipient.strip()))
 
 def format_phone_number(phone: str) -> str:
@@ -1828,9 +2054,9 @@ def dispatch_action(parsed):
 @app.route('/manifest.json')
 def manifest():
     return jsonify({
-        "name": "Smart AI Agent",
+        "name": "Smart AI Agent with Wake Word",
         "short_name": "AI Agent",
-        "description": "AI-powered task and appointment manager with professional voice SMS, Email & Service Reminders",
+        "description": "AI-powered task and appointment manager with wake word activation, professional voice SMS, Email & Service Reminders",
         "start_url": "/",
         "display": "standalone",
         "background_color": "#f8f9fa",
@@ -1877,8 +2103,8 @@ self.addEventListener('fetch', event => {
 });
 ''', {'Content-Type': 'application/javascript'}
 
-# ----- Enhanced Mobile HTML Template -----
-HTML_TEMPLATE = """
+# ----- Enhanced Mobile HTML Template with Wake Word Support -----
+HTML_TEMPLATE = f"""
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1886,7 +2112,7 @@ HTML_TEMPLATE = """
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
  <link rel="icon" type="image/png" href="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/687bba55e31a7722ec2593a8.png">
 <link rel="apple-touch-icon" href="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/687bc4d4e36c15754e18b561.png">
-  <title>Smart AI Agent</title>
+  <title>Smart AI Agent with Wake Word</title>
   <link rel="manifest" href="/manifest.json">
   <meta name="theme-color" content="#007bff">
   <meta name="apple-mobile-web-app-capable" content="yes">
@@ -1895,12 +2121,12 @@ HTML_TEMPLATE = """
   <link rel="apple-touch-icon" href="data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    * {
+    * {{
       box-sizing: border-box;
       -webkit-tap-highlight-color: transparent;
-    }
+    }}
     
-  body {
+  body {{
   font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   background: linear-gradient(to bottom, #000b1f 0%, #f0f8ff 100%);
   margin: 0;
@@ -1913,19 +2139,18 @@ HTML_TEMPLATE = """
   color: #212529;
   padding-top: env(safe-area-inset-top);
   padding-bottom: env(safe-area-inset-bottom);
-}
+}}
 
-
-    .container {
+    .container {{
       width: 100%;
       max-width: 600px;
       display: flex;
       flex-direction: column;
       gap: 1.5rem;
       margin-top: 2rem;
-    }
+    }}
 
-    h1 {
+    h1 {{
       font-size: 2.2rem;
       margin: 0;
       text-align: center;
@@ -1933,18 +2158,18 @@ HTML_TEMPLATE = """
       color: white;
       letter-spacing: -0.025em;
       text-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    }
+    }}
 
-    .subtitle {
+    .subtitle {{
       font-size: 1rem;
       color: rgba(255,255,255,0.9);
       text-align: center;
       margin-bottom: 2rem;
       font-weight: 400;
       line-height: 1.5;
-    }
+    }}
 
-    .feature-badge {
+    .feature-badge {{
       background: rgba(255,255,255,0.2);
       color: white;
       padding: 0.5rem 1rem;
@@ -1955,24 +2180,37 @@ HTML_TEMPLATE = """
       margin: 0 auto 1rem;
       backdrop-filter: blur(10px);
       border: 1px solid rgba(255,255,255,0.3);
-    }
+    }}
 
-    .input-container {
+    .wake-word-badge {{
+      background: linear-gradient(45deg, #28a745, #20c997);
+      color: white;
+      padding: 0.5rem 1rem;
+      border-radius: 20px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      display: inline-block;
+      margin: 0 auto 1rem;
+      box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+      border: 1px solid rgba(255,255,255,0.2);
+    }}
+
+    .input-container {{
       background: rgba(255,255,255,0.95);
       border-radius: 16px;
       padding: 1.5rem;
       border: 1px solid rgba(255,255,255,0.2);
       box-shadow: 0 8px 32px rgba(0,0,0,0.1);
       backdrop-filter: blur(10px);
-    }
+    }}
 
-    .input-group {
+    .input-group {{
       display: flex;
       gap: 0.75rem;
       align-items: center;
-    }
+    }}
 
-    input {
+    input {{
       flex: 1;
       padding: 16px 20px;
       font-size: 16px;
@@ -1983,20 +2221,20 @@ HTML_TEMPLATE = """
       color: #212529;
       font-family: 'Inter', sans-serif;
       transition: all 0.3s ease;
-    }
+    }}
 
-    input:focus {
+    input:focus {{
       border-color: #007bff;
       box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.1);
       transform: translateY(-1px);
-    }
+    }}
 
-    input::placeholder {
+    input::placeholder {{
       color: #6c757d;
       font-weight: 400;
-    }
+    }}
 
-    button {
+    button {{
       padding: 16px 28px;
       font-size: 16px;
       font-weight: 600;
@@ -2009,18 +2247,18 @@ HTML_TEMPLATE = """
       transition: all 0.3s ease;
       font-family: 'Inter', sans-serif;
       box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
-    }
+    }}
 
-    button:hover {
+    button:hover {{
       transform: translateY(-2px);
       box-shadow: 0 6px 20px rgba(0, 123, 255, 0.4);
-    }
+    }}
 
-    button:active {
+    button:active {{
       transform: translateY(0);
-    }
+    }}
 
-    .response-container {
+    .response-container {{
       background: rgba(255,255,255,0.95);
       border-radius: 16px;
       padding: 1.5rem;
@@ -2029,9 +2267,9 @@ HTML_TEMPLATE = """
       flex: 1;
       box-shadow: 0 8px 32px rgba(0,0,0,0.1);
       backdrop-filter: blur(10px);
-    }
+    }}
 
-    .response-text {
+    .response-text {{
       font-size: 14px;
       line-height: 1.6;
       white-space: pre-wrap;
@@ -2039,17 +2277,17 @@ HTML_TEMPLATE = """
       color: #495057;
       font-family: 'Inter', sans-serif;
       font-weight: 400;
-    }
+    }}
 
-    .voice-controls {
+    .voice-controls {{
       display: flex;
       justify-content: center;
       align-items: center;
       gap: 1rem;
       margin-top: 1rem;
-    }
+    }}
 
-    .mic-button {
+    .mic-button {{
       width: 72px;
       height: 72px;
       border-radius: 50%;
@@ -2065,20 +2303,20 @@ HTML_TEMPLATE = """
       position: relative;
       overflow: hidden;
       box-shadow: 0 6px 20px rgba(220, 53, 69, 0.4);
-    }
+    }}
 
-    .mic-button:hover {
+    .mic-button:hover {{
       transform: scale(1.05);
       box-shadow: 0 8px 24px rgba(220, 53, 69, 0.5);
-    }
+    }}
 
-    .mic-button.recording {
+    .mic-button.recording {{
       background: linear-gradient(45deg, #28a745, #20c997);
       animation: pulse 1.5s infinite;
       box-shadow: 0 6px 20px rgba(40, 167, 69, 0.5);
-    }
+    }}
 
-    .mic-button.recording::before {
+    .mic-button.recording::before {{
       content: '';
       position: absolute;
       top: 50%;
@@ -2089,20 +2327,20 @@ HTML_TEMPLATE = """
       border-radius: 50%;
       transform: translate(-50%, -50%) scale(0);
       animation: ripple 1.5s infinite;
-    }
+    }}
 
-    @keyframes pulse {
-      0% { transform: scale(1); }
-      50% { transform: scale(1.05); }
-      100% { transform: scale(1); }
-    }
+    @keyframes pulse {{
+      0% {{ transform: scale(1); }}
+      50% {{ transform: scale(1.05); }}
+      100% {{ transform: scale(1); }}
+    }}
 
-    @keyframes ripple {
-      0% { transform: translate(-50%, -50%) scale(0); opacity: 1; }
-      100% { transform: translate(-50%, -50%) scale(2); opacity: 0; }
-    }
+    @keyframes ripple {{
+      0% {{ transform: translate(-50%, -50%) scale(0); opacity: 1; }}
+      100% {{ transform: translate(-50%, -50%) scale(2); opacity: 0; }}
+    }}
 
-    .voice-status {
+    .voice-status {{
       font-size: 0.9rem;
       color: #212529;
       text-align: center;
@@ -2110,17 +2348,17 @@ HTML_TEMPLATE = """
       min-height: 22px;
       font-weight: 500;
       text-shadow: none;
-    }
+    }}
 
-    .voice-not-supported {
+    .voice-not-supported {{
       color: #ffc107;
       font-size: 0.85rem;
       text-align: center;
       margin-top: 0.5rem;
       font-weight: 500;
-    }
+    }}
 
-    .install-prompt {
+    .install-prompt {{
       position: fixed;
       bottom: 20px;
       left: 20px;
@@ -2135,9 +2373,9 @@ HTML_TEMPLATE = """
       z-index: 1000;
       box-shadow: 0 8px 24px rgba(0, 123, 255, 0.3);
       font-weight: 500;
-    }
+    }}
 
-    .install-prompt button {
+    .install-prompt button {{
       background: rgba(255,255,255,0.2);
       border: none;
       color: white;
@@ -2147,76 +2385,77 @@ HTML_TEMPLATE = """
       cursor: pointer;
       font-weight: 500;
       transition: all 0.2s ease;
-    }
+    }}
 
-    .install-prompt button:hover {
+    .install-prompt button:hover {{
       background: rgba(255,255,255,0.3);
-    }
+    }}
 
-    @media (max-width: 480px) {
-      .container {
+    @media (max-width: 480px) {{
+      .container {{
         max-width: 100%;
         margin-top: 1rem;
         gap: 1rem;
-      }
+      }}
       
-      body {
+      body {{
         padding: 0.75rem;
-      }
+      }}
       
-      h1 {
+      h1 {{
         font-size: 1.8rem;
-      }
+      }}
       
-      .subtitle {
+      .subtitle {{
         font-size: 0.9rem;
         margin-bottom: 1.5rem;
-      }
+      }}
       
-      .mic-button {
+      .mic-button {{
         width: 64px;
         height: 64px;
         font-size: 24px;
-      }
+      }}
       
-      .input-container, .response-container {
+      .input-container, .response-container {{
         padding: 1.25rem;
-      }
-    }
+      }}
+    }}
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>Smart AI Agent</h1>
-    <div class="subtitle">Speak naturally - AI handles SMS, Email & Service Reminders</div>
+    <h1>🎙️ Smart AI Agent</h1>
+    <div class="subtitle">Wake word activated - Say "{CONFIG['wake_word_primary']}" to start!</div>
+    <div class="wake-word-badge">🎯 Wake Word: "{CONFIG['wake_word_primary']}"</div>
     <div class="feature-badge">✨ Multi-Recipient Messages, Emails & Service Reminders</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Try messaging, emailing, or 'Remind me to change oil on my Honda on Dec 15th'" />
+        <input type="text" id="command" placeholder="Type or say: '{CONFIG['wake_word_primary']}: text Ron saying MVP is ready'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎯 Ready to send messages, emails & manage service reminders! 
+      <div class="response-text" id="response">🎙️ Wake Word System Active! Start commands with "{CONFIG['wake_word_primary']}"
 
 📱 SMS Examples:
-• "Text 8136414177 saying hey how are you"
-• "Text John and Mary saying the meeting moved to 3pm"
+• "{CONFIG['wake_word_primary']}: text 8136414177 saying hey how are you"
+• "{CONFIG['wake_word_primary']}: text John and Mary saying meeting moved to 3pm"
 
 📧 Email Examples:
-• "Email john@example.com and mary@example.com saying hello everyone"
+• "{CONFIG['wake_word_primary']}: email john@example.com saying meeting at 3pm"
+• "{CONFIG['wake_word_primary']}: email john@example.com and mary@example.com saying hello everyone"
 
 🔧 Service Reminder Examples:
-• "Remind me to change oil on my 2020 Honda Civic on December 15th"
-• "Set a reminder for brake inspection on my car due in 3 months"
-• "Schedule tire rotation for my Honda at 75000 miles"
+• "{CONFIG['wake_word_primary']}: remind me to change oil on my Honda Civic on December 15th"
+• "{CONFIG['wake_word_primary']}: set reminder for brake inspection on my car due in 3 months"
 
 🔄 Mixed Examples:
-• "Send a message to 8136414177 and john@example.com saying hello"
-• "Message Mom and dad@example.com that I'll be home late"
+• "{CONFIG['wake_word_primary']}: message 8136414177 and john@example.com saying hello"
 
+      </div>
     </div>
 
     <div class="voice-controls">
@@ -2238,10 +2477,11 @@ HTML_TEMPLATE = """
     let recognition;
     let isRecording = false;
     let voiceSupported = false;
+    const primaryWakeWord = "{CONFIG['wake_word_primary']}";
 
     // Initialize speech recognition
-    function initSpeechRecognition() {
-      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+    function initSpeechRecognition() {{
+      if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {{
         const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
         recognition = new SpeechRecognition();
         
@@ -2250,43 +2490,43 @@ HTML_TEMPLATE = """
         recognition.lang = 'en-US';
         recognition.maxAlternatives = 3;
         
-        recognition.onstart = function() {
+        recognition.onstart = function() {{
           isRecording = true;
           document.getElementById('micButton').classList.add('recording');
-          document.getElementById('voiceStatus').textContent = '🎤 Listening... Speak naturally!';
-          document.getElementById('command').placeholder = 'Listening...';
-        };
+          document.getElementById('voiceStatus').textContent = `🎤 Listening... Say "${{primaryWakeWord}}: your command"`;
+          document.getElementById('command').placeholder = 'Listening for wake word...';
+        }};
         
-        recognition.onresult = function(event) {
+        recognition.onresult = function(event) {{
           let transcript = '';
           let isFinal = false;
           
-          for (let i = event.resultIndex; i < event.results.length; i++) {
-            if (event.results[i].isFinal) {
+          for (let i = event.resultIndex; i < event.results.length; i++) {{
+            if (event.results[i].isFinal) {{
               transcript += event.results[i][0].transcript;
               isFinal = true;
-            } else {
+            }} else {{
               // Show interim results
               document.getElementById('command').value = event.results[i][0].transcript;
-            }
-          }
+            }}
+          }}
           
-          if (isFinal) {
+          if (isFinal) {{
             document.getElementById('command').value = transcript.trim();
-            document.getElementById('voiceStatus').textContent = `📝 Captured: "${transcript.trim()}"`;
+            document.getElementById('voiceStatus').textContent = `📝 Captured: "${{transcript.trim()}}"`;
             
             // Auto-submit after voice input with a delay
-            setTimeout(() => {
+            setTimeout(() => {{
               document.getElementById('voiceStatus').textContent = 'Processing with AI...';
               sendCommand();
-            }, 1500);
-          }
-        };
+            }}, 1500);
+          }}
+        }};
         
-        recognition.onerror = function(event) {
+        recognition.onerror = function(event) {{
           console.error('Speech recognition error:', event.error);
           let errorMessage = '❌ ';
-          switch(event.error) {
+          switch(event.error) {{
             case 'no-speech':
               errorMessage += 'No speech detected. Try speaking louder.';
               break;
@@ -2300,164 +2540,215 @@ HTML_TEMPLATE = """
               errorMessage += 'Network error. Check connection.';
               break;
             default:
-              errorMessage += `Error: ${event.error}`;
-          }
+              errorMessage += `Error: ${{event.error}}`;
+          }}
           document.getElementById('voiceStatus').textContent = errorMessage;
           stopRecording();
-        };
+        }};
         
-        recognition.onend = function() {
+        recognition.onend = function() {{
           stopRecording();
-        };
+        }};
         
         voiceSupported = true;
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
-      } else {
+        document.getElementById('voiceStatus').textContent = `Tap microphone and say "${{primaryWakeWord}}: your command"`;
+      }} else {{
         document.getElementById('voiceStatus').innerHTML = '<div class="voice-not-supported">⚠️ Voice input not supported in this browser</div>';
         document.getElementById('micButton').style.display = 'none';
-      }
-    }
+      }}
+    }}
 
-    function toggleVoiceRecording() {
+    function toggleVoiceRecording() {{
       if (!voiceSupported) return;
       
-      if (isRecording) {
+      if (isRecording) {{
         recognition.stop();
-      } else {
-        try {
+      }} else {{
+        try {{
           // Clear previous input
           document.getElementById('command').value = '';
           recognition.start();
-        } catch (error) {
+        }} catch (error) {{
           console.error('Failed to start speech recognition:', error);
           document.getElementById('voiceStatus').textContent = '❌ Failed to start voice input';
-        }
-      }
-    }
+        }}
+      }}
+    }}
 
-    function stopRecording() {
+    function stopRecording() {{
       isRecording = false;
       document.getElementById('micButton').classList.remove('recording');
-      document.getElementById('command').placeholder = 'Try messaging, emailing, or "Remind me to change oil on my Honda on Dec 15th"';
+      document.getElementById('command').placeholder = `Type or say: '${{primaryWakeWord}}: text Ron saying MVP is ready'`;
       
-      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {
-        document.getElementById('voiceStatus').textContent = 'Tap microphone to speak your message';
-      }
-    }
+      if (document.getElementById('voiceStatus').textContent.includes('Listening')) {{
+        document.getElementById('voiceStatus').textContent = `Tap microphone and say "${{primaryWakeWord}}: your command"`;
+      }}
+    }}
 
     // PWA Install prompt
-    window.addEventListener('beforeinstallprompt', (e) => {
+    window.addEventListener('beforeinstallprompt', (e) => {{
       e.preventDefault();
       deferredPrompt = e;
       document.getElementById('installPrompt').style.display = 'flex';
-    });
+    }});
 
-    function installApp() {
-      if (deferredPrompt) {
+    function installApp() {{
+      if (deferredPrompt) {{
         deferredPrompt.prompt();
-        deferredPrompt.userChoice.then((choiceResult) => {
-          if (choiceResult.outcome === 'accepted') {
+        deferredPrompt.userChoice.then((choiceResult) => {{
+          if (choiceResult.outcome === 'accepted') {{
             console.log('User accepted the install prompt');
-          }
+          }}
           deferredPrompt = null;
           hideInstallPrompt();
-        });
-      }
-    }
+        }});
+      }}
+    }}
 
-    function hideInstallPrompt() {
+    function hideInstallPrompt() {{
       document.getElementById('installPrompt').style.display = 'none';
-    }
+    }}
 
     // Register service worker
-    if ('serviceWorker' in navigator) {
+    if ('serviceWorker' in navigator) {{
       navigator.serviceWorker.register('/sw.js');
-    }
+    }}
 
-    function sendCommand() {
+    function sendCommand() {{
       const input = document.getElementById('command');
       const output = document.getElementById('response');
       const userText = input.value.trim();
 
-      if (!userText) {
-        output.textContent = "⚠️ Please enter a command or use voice input.";
+      if (!userText) {{
+        output.textContent = `⚠️ Please enter a command starting with "${{primaryWakeWord}}" or use voice input.`;
         return;
-      }
+      }}
 
-      output.textContent = "Processing with AI...";
+      // Check if command starts with wake word
+      const hasWakeWord = userText.toLowerCase().startsWith(primaryWakeWord.toLowerCase());
 
-      fetch("/execute", {
+      if (!hasWakeWord) {{
+        output.textContent = `⚠️ Please start your command with "${{primaryWakeWord}}". 
+
+Example: "${{primaryWakeWord}}: text John saying hello"
+
+Or try:
+• "${{primaryWakeWord}}: email john@email.com saying meeting at 3pm"
+• "${{primaryWakeWord}}: remind me to change oil on my Honda on Dec 15th"
+• "${{primaryWakeWord}}: text John and Mary saying we're running late"`;
+        return;
+      }}
+
+      output.textContent = "🎙️ Processing wake word command with AI...";
+
+      fetch("/execute", {{
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: userText })
-      })
+        headers: {{ "Content-Type": "application/json" }},
+        body: JSON.stringify({{ text: userText }})
+      }})
       .then(res => res.json())
-      .then(data => {
-        output.textContent = "✅ " + (data.response || "Done!") + "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
+      .then(data => {{
+        let responseText = "✅ " + (data.response || "Done!");
+        
+        // Add wake word confirmation if available
+        if (data.claude_output && data.claude_output.wake_word_info) {{
+          const wakeInfo = data.claude_output.wake_word_info;
+          responseText += `\\n\\n🎙️ Wake Word: "${{wakeInfo.wake_word_detected}}" (confidence: ${{(wakeInfo.confidence * 100).toFixed(0)}}%)`;
+        }}
+        
+        responseText += "\\n\\n📋 Raw Response:\\n" + JSON.stringify(data.claude_output, null, 2);
+        
+        output.textContent = responseText;
         input.value = "";
-        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
-      })
-      .catch(err => {
+        document.getElementById('voiceStatus').textContent = voiceSupported ? `Tap microphone and say "${{primaryWakeWord}}: your command"` : '';
+      }})
+      .catch(err => {{
         output.textContent = "❌ Error: " + err.message;
-        document.getElementById('voiceStatus').textContent = voiceSupported ? 'Tap microphone to speak your message' : '';
-      });
-    }
+        document.getElementById('voiceStatus').textContent = voiceSupported ? `Tap microphone and say "${{primaryWakeWord}}: your command"` : '';
+      }});
+    }}
 
     // Allow Enter key to submit
-    document.getElementById('command').addEventListener('keypress', function(e) {
-      if (e.key === 'Enter') {
+    document.getElementById('command').addEventListener('keypress', function(e) {{
+      if (e.key === 'Enter') {{
         sendCommand();
-      }
-    });
+      }}
+    }});
 
     // Handle keyboard on mobile
-    document.getElementById('command').addEventListener('focus', function() {
-      setTimeout(() => {
-        this.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }, 300);
-    });
+    document.getElementById('command').addEventListener('focus', function() {{
+      setTimeout(() => {{
+        this.scrollIntoView({{ behavior: 'smooth', block: 'center' }});
+      }}, 300);
+    }});
 
     // Initialize speech recognition when page loads
     window.addEventListener('load', initSpeechRecognition);
 
     // Request microphone permission on first interaction
-    document.getElementById('micButton').addEventListener('click', function() {
+    document.getElementById('micButton').addEventListener('click', function() {{
       if (!voiceSupported) return;
       
       // Request microphone permission
-      navigator.mediaDevices.getUserMedia({ audio: true })
-        .then(function(stream) {
+      navigator.mediaDevices.getUserMedia({{ audio: true }})
+        .then(function(stream) {{
           // Permission granted, stop the stream
           stream.getTracks().forEach(track => track.stop());
-        })
-        .catch(function(err) {
+        }})
+        .catch(function(err) {{
           console.log('Microphone permission denied:', err);
           document.getElementById('voiceStatus').textContent = '❌ Microphone permission required';
-        });
-    });
+        }});
+    }});
   </script>
 </body>
 </html>
 """
 
-# ----- Routes -----
+# ==================== ENHANCED EXECUTE ROUTE WITH WAKE WORD SUPPORT ====================
 
 @app.route("/")
 def root():
     return HTML_TEMPLATE
 
-# Enhanced execute route with service reminder support
 @app.route('/execute', methods=['POST'])
 def execute():
     try:
         data = request.json
         prompt = data.get("text", "")
         
-        # FIRST: Try service reminder commands
-        service_command = extract_service_reminder_command(prompt)
+        print(f"[EXECUTE] Received command: '{prompt[:100]}{'...' if len(prompt) > 100 else ''}'")
         
+        # WAKE WORD PROCESSING - Check for wake word first
+        wake_result = wake_word_processor.process_wake_word_command(prompt)
+        
+        # If wake word processing failed, return the error
+        if not wake_result.get("success", True):  # success=False means wake word error
+            print(f"[EXECUTE] Wake word validation failed")
+            return jsonify({
+                "response": wake_result.get("error", "Wake word validation failed"),
+                "claude_output": wake_result
+            })
+        
+        # If wake word processing succeeded and returned a command, use it
+        if wake_result.get("action"):
+            print(f"[EXECUTE] Wake word extracted command: {wake_result.get('action')}")
+            dispatch_result = dispatch_action(wake_result)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": wake_result
+            })
+        
+        # FALLBACK: Original command processing for edge cases
+        print("[EXECUTE] Using fallback command processing")
+        
+        # Get the command text after wake word removal
+        command_text = wake_result.get("command_text", prompt)
+        
+        # FIRST: Try service reminder commands
+        service_command = extract_service_reminder_command(command_text)
         if service_command:
-            print(f"[VOICE SERVICE] Detected service reminder command: {service_command}")
+            print(f"[EXECUTE FALLBACK] Detected service reminder command: {service_command}")
             dispatch_result = handle_create_service_reminder(service_command)
             return jsonify({
                 "response": dispatch_result,
@@ -2465,10 +2756,9 @@ def execute():
             })
         
         # SECOND: Try email commands
-        email_command = extract_email_command(prompt)
-        
+        email_command = extract_email_command(command_text)
         if email_command:
-            print(f"[VOICE EMAIL] Detected email command: {email_command}")
+            print(f"[EXECUTE FALLBACK] Detected email command: {email_command}")
             dispatch_result = handle_send_email(email_command)
             return jsonify({
                 "response": dispatch_result,
@@ -2476,10 +2766,9 @@ def execute():
             })
         
         # THIRD: Try multi-recipient email commands
-        multi_email_command = extract_email_command_multi(prompt)
-        
+        multi_email_command = extract_email_command_multi(command_text)
         if multi_email_command:
-            print(f"[VOICE EMAIL MULTI] Detected multi-recipient email: {multi_email_command}")
+            print(f"[EXECUTE FALLBACK] Detected multi-recipient email: {multi_email_command}")
             if multi_email_command["action"] == "send_email_multi":
                 dispatch_result = handle_send_email_multi(multi_email_command)
             else:
@@ -2490,10 +2779,9 @@ def execute():
             })
         
         # FOURTH: Try the original SMS command
-        sms_command = extract_sms_command(prompt)
-        
+        sms_command = extract_sms_command(command_text)
         if sms_command:
-            print(f"[VOICE SMS] Detected SMS command: {sms_command}")
+            print(f"[EXECUTE FALLBACK] Detected SMS command: {sms_command}")
             dispatch_result = handle_send_message(sms_command)
             return jsonify({
                 "response": dispatch_result,
@@ -2501,10 +2789,9 @@ def execute():
             })
         
         # FIFTH: Try multi-recipient SMS
-        multi_sms_command = extract_sms_command_multi(prompt)
-        
+        multi_sms_command = extract_sms_command_multi(command_text)
         if multi_sms_command:
-            print(f"[VOICE SMS MULTI] Detected multi-recipient SMS: {multi_sms_command}")
+            print(f"[EXECUTE FALLBACK] Detected multi-recipient SMS: {multi_sms_command}")
             if multi_sms_command["action"] == "send_message_multi":
                 dispatch_result = handle_send_message_multi(multi_sms_command)
             else:
@@ -2515,7 +2802,7 @@ def execute():
             })
         
         # SIXTH: Check for mixed message commands (phone numbers and emails together)
-        if "message" in prompt.lower() or "send" in prompt.lower():
+        if "message" in command_text.lower() or "send" in command_text.lower():
             # Look for patterns that might contain both phones and emails
             mixed_patterns = [
                 r'(?:send|message) (.+?) (?:saying|that) (.+)',
@@ -2523,7 +2810,7 @@ def execute():
             ]
             
             for pattern in mixed_patterns:
-                match = re.search(pattern, prompt.lower(), re.IGNORECASE)
+                match = re.search(pattern, command_text.lower(), re.IGNORECASE)
                 if match:
                     recipients_text = match.group(1).strip()
                     message = match.group(2).strip()
@@ -2567,12 +2854,13 @@ def execute():
                                     "action": "mixed_messaging",
                                     "recipients": recipients,
                                     "message": message,
-                                    "result": result
+                                    "result": result,
+                                    "wake_word_info": wake_result
                                 }
                             })
         
         # SEVENTH: Fall back to Claude for other commands
-        result = call_claude(prompt)
+        result = call_claude(command_text)
         
         if "error" in result:
             return jsonify({"response": result["error"]}), 500
@@ -2584,11 +2872,404 @@ def execute():
         })
 
     except Exception as e:
+        print(f"[EXECUTE] Unexpected error: {e}")
         return jsonify({"response": f"Unexpected error: {str(e)}"}), 500
+
+# ==================== NEW WAKE WORD API ENDPOINTS ====================
+
+@app.route('/api/wake-word/config', methods=['GET'])
+def get_wake_word_config():
+    """Get current wake word configuration"""
+    print("[API] Wake word config requested")
+    
+    return jsonify({
+        "wake_words": CONFIG["wake_words"],
+        "primary_wake_word": CONFIG["wake_word_primary"],
+        "enabled": CONFIG["wake_word_enabled"],
+        "case_sensitive": CONFIG["wake_word_case_sensitive"],
+        "examples": wake_word_processor.get_wake_word_examples()
+    })
+
+@app.route('/api/wake-word/examples', methods=['GET'])
+def get_wake_word_examples():
+    """Get example commands with wake words"""
+    print("[API] Wake word examples requested")
+    
+    return jsonify({
+        "examples": wake_word_processor.get_wake_word_examples(),
+        "primary_wake_word": CONFIG["wake_word_primary"],
+        "supported_commands": [
+            "SMS: '[wake_word]: text [recipient] saying [message]'",
+            "Email: '[wake_word]: email [recipient] saying [message]'",
+            "Service reminders: '[wake_word]: remind me to [service] on my [vehicle] on [date]'",
+            "Multi-recipient: '[wake_word]: text John and Mary saying [message]'"
+        ]
+    })
+
+@app.route('/api/voice-command', methods=['POST'])
+def handle_voice_command():
+    """
+    New API endpoint specifically for wake word voice commands
+    """
+    print("[API] Voice command endpoint called")
+    
+    try:
+        data = request.get_json()
+        
+        if not data or 'text' not in data:
+            print("[API] Voice command - missing 'text' field")
+            return jsonify({
+                "error": "Missing 'text' field in request body",
+                "example": {
+                    "text": f"{CONFIG['wake_word_primary']}: text John saying hello"
+                }
+            }), 400
+        
+        text = data['text'].strip()
+        
+        if not text:
+            print("[API] Voice command - empty text")
+            return jsonify({
+                "error": "Empty text provided",
+                "examples": wake_word_processor.get_wake_word_examples()
+            }), 400
+        
+        # Process the voice command with wake word detection
+        result = wake_word_processor.process_wake_word_command(text)
+        
+        # If it's a valid command (has action), execute it
+        if result.get("action") and result.get("success", True):
+            print(f"[API] Executing action: {result['action']}")
+            execution_result = dispatch_action(result)
+            
+            # Combine command parsing result with execution result
+            return jsonify({
+                "success": True,
+                "command_parsed": result,
+                "execution_result": execution_result,
+                "wake_word_info": result.get("wake_word_info", {})
+            }), 200
+        
+        # Return the error or parsing result
+        status_code = 400 if not result.get("success", True) else 200
+        return jsonify(result)
+
+# Original test endpoints (keeping for backward compatibility)
+
+@app.route('/test_sms', methods=['POST'])
+def test_sms():
+    """Test single SMS endpoint"""
+    data = request.json
+    to = data.get('to')
+    message = data.get('message', 'Test message from Enhanced Flask AI Agent with Wake Word')
+    enhance = data.get('enhance', True)
+    
+    if not to:
+        return jsonify({"error": "Phone number 'to' is required"}), 400
+    
+    # Optionally enhance the message
+    if enhance:
+        enhanced_message = enhance_message_with_claude(message)
+        result = twilio_client.send_sms(to, enhanced_message)
+        result['original_message'] = message
+        result['enhanced_message'] = enhanced_message
+    else:
+        result = twilio_client.send_sms(to, message)
+    
+    return jsonify(result)
+
+@app.route('/test_email', methods=['POST'])
+def test_email():
+    """Test single email endpoint"""
+    data = request.json
+    to = data.get('to')
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test email from Enhanced Flask AI Agent with Wake Word Support')
+    enhance = data.get('enhance', True)
+    
+    if not to:
+        return jsonify({"error": "Email address 'to' is required"}), 400
+    
+    # Optionally enhance the message
+    if enhance:
+        enhanced_message = enhance_message_with_claude(message)
+        if not subject:
+            subject = generate_email_subject(enhanced_message)
+        result = email_client.send_email(to, subject, enhanced_message)
+        result['original_message'] = message
+        result['enhanced_message'] = enhanced_message
+        result['generated_subject'] = subject
+    else:
+        if not subject:
+            subject = "Test Email from Smart AI Agent"
+        result = email_client.send_email(to, subject, message)
+    
+    return jsonify(result)
+
+@app.route('/test_multi_sms', methods=['POST'])
+def test_multi_sms():
+    """Test multi-recipient SMS endpoint"""
+    data = request.json
+    recipients = data.get('recipients', [])  # List of phone numbers
+    message = data.get('message', 'Test multi-recipient message from Enhanced Flask AI Agent with Wake Word')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_sms_to_multiple(recipients, message, enhance)
+    return jsonify(result)
+
+@app.route('/test_multi_email', methods=['POST'])
+def test_multi_email():
+    """Test multi-recipient email endpoint"""
+    data = request.json
+    recipients = data.get('recipients', [])  # List of email addresses
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test multi-recipient email from Enhanced Flask AI Agent with Wake Word')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_emails_to_multiple(recipients, subject, message, enhance)
+    return jsonify(result)
+
+@app.route('/test_mixed', methods=['POST'])
+def test_mixed():
+    """Test mixed messaging endpoint (SMS + Email)"""
+    data = request.json
+    recipients = data.get('recipients', [])  # Mix of phone numbers and email addresses
+    subject = data.get('subject', '')
+    message = data.get('message', 'Test mixed message from Enhanced Flask AI Agent with Wake Word')
+    enhance = data.get('enhance', True)
+    
+    if not recipients:
+        return jsonify({"error": "Recipients list is required"}), 400
+    
+    if not isinstance(recipients, list):
+        return jsonify({"error": "Recipients must be a list"}), 400
+    
+    result = send_mixed_messages(recipients, message, subject, enhance)
+    return jsonify(result)
+
+@app.route('/enhance_message', methods=['POST'])
+def enhance_message_endpoint():
+    """Endpoint to test message enhancement"""
+    data = request.json
+    message = data.get('message', '')
+    
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    
+    enhanced = enhance_message_with_claude(message)
+    
+    return jsonify({
+        "original": message,
+        "enhanced": enhanced
+    })
+
+@app.route('/generate_subject', methods=['POST'])
+def generate_subject_endpoint():
+    """Endpoint to test email subject generation"""
+    data = request.json
+    message = data.get('message', '')
+    
+    if not message:
+        return jsonify({"error": "Message is required"}), 400
+    
+    subject = generate_email_subject(message)
+    
+    return jsonify({
+        "message": message,
+        "generated_subject": subject
+    })
+
+@app.route('/twilio_info', methods=['GET'])
+def twilio_info():
+    """Get Twilio account information"""
+    result = twilio_client.get_account_info()
+    return jsonify(result)
+
+@app.route('/email_config', methods=['GET'])
+def email_config():
+    """Get email provider configuration and troubleshooting info"""
+    provider_info = email_client.get_provider_info()
+    current_config = {
+        "current_smtp_server": email_client.smtp_server,
+        "current_smtp_port": email_client.smtp_port,
+        "current_email": email_client.email_address,
+        "current_provider": email_client.email_provider
+    }
+    
+    return jsonify({
+        "current_config": current_config,
+        "provider_info": provider_info,
+        "status": "configured" if email_client.email_address and email_client.email_password else "not configured"
+    })
+
+@app.route('/email_info', methods=['GET'])
+def email_info():
+    """Get email connection test results"""
+    result = email_client.test_connection()
+    return jsonify(result)
+
+# ==================== WAKE WORD SYSTEM VALIDATION ====================
+
+def validate_wake_word_system():
+    """Validate wake word system on startup"""
+    print("🎙️ Validating wake word system configuration")
+    
+    if not CONFIG["wake_words"]:
+        print("❌ No wake words configured!")
+        return False
+    
+    if not CONFIG["wake_word_primary"]:
+        print("❌ No primary wake word configured!")
+        return False
+    
+    if CONFIG["wake_word_primary"] not in CONFIG["wake_words"]:
+        print("⚠️ Primary wake word not in wake words list, adding it")
+        CONFIG["wake_words"].append(CONFIG["wake_word_primary"])
+    
+    # Test wake word detection
+    test_commands = [
+        f"{CONFIG['wake_word_primary']}: text John saying hello",
+        f"{CONFIG['wake_words'][0]}: email test@example.com saying test"
+    ]
+    
+    for test_command in test_commands:
+        result = wake_word_processor.detect_wake_word(test_command)
+        if not result["has_wake_word"]:
+            print(f"❌ Wake word detection failed for test: '{test_command}'")
+            return False
+    
+    print("✅ Wake word system validation successful")
+    return True
+
+# ==================== MAIN EXECUTION ====================
+
+if __name__ == '__main__':
+    print("🚀 Starting Enhanced Smart AI Agent Flask App with Wake Word Activation + SMS, Email & Service Reminders")
+    print(f"🎙️ Wake Word System: {'✅ Enabled' if CONFIG['wake_word_enabled'] else '❌ Disabled'}")
+    print(f"🔑 Primary Wake Word: '{CONFIG['wake_word_primary']}'")
+    print(f"📝 All Wake Words: {CONFIG['wake_words']}")
+    print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
+    print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
+    print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
+    print(f"🔧 Service Reminders: ✅ Enabled (SQLite Database)")
+    print("✨ Features: Wake Word Activation, Multi-Recipient SMS, Multi-Recipient Email, Mixed Messaging, Professional Voice Processing, Message Enhancement, Auto-Subject Generation, Service Reminders, Background Notifications")
+    print("🔧 Execution order: Wake Word Detection → Service Reminders → Email → Multi-Email → SMS → Multi-SMS → Mixed → Claude fallback")
+    
+    # Validate wake word system
+    print("\n🎙️ WAKE WORD SYSTEM:")
+    if not validate_wake_word_system():
+        print("❌ Wake word system validation failed!")
+    else:
+        print("🎙️ Wake word system ready!")
+        print(f"💬 Primary wake word: '{CONFIG['wake_word_primary']}'")
+        print(f"💬 All wake words: {CONFIG['wake_words']}")
+        print(f"💬 Try saying: '{CONFIG['wake_word_primary']}: text Ron saying MVP is ready!'")
+    
+    # Start background reminder checker
+    service_manager.start_background_checker()
+    
+    print("\n📋 Wake Word Voice Command Examples:")
+    print("  📱 SMS Commands:")
+    print(f"    • '{CONFIG['wake_word_primary']}: text 8136414177 saying hey how are you'")
+    print(f"    • '{CONFIG['wake_word_primary']}: send message to John saying the meeting moved'")
+    print(f"    • '{CONFIG['wake_word_primary']}: text John and Mary saying meeting moved to 3pm'")
+    print("  📧 Email Commands:")
+    print(f"    • '{CONFIG['wake_word_primary']}: email john@example.com saying meeting at 3pm'")
+    print(f"    • '{CONFIG['wake_word_primary']}: email john@example.com with subject meeting update saying time changed'")
+    print(f"    • '{CONFIG['wake_word_primary']}: email john@example.com and mary@example.com saying hello everyone'")
+    print("  🔧 Service Reminder Commands:")
+    print(f"    • '{CONFIG['wake_word_primary']}: remind me to change oil on my Honda Civic on December 15th'")
+    print(f"    • '{CONFIG['wake_word_primary']}: set reminder for brake inspection on my car due in 3 months'")
+    print(f"    • '{CONFIG['wake_word_primary']}: schedule tire rotation for my Honda at 75000 miles'")
+    print("  🔄 Mixed Commands:")
+    print(f"    • '{CONFIG['wake_word_primary']}: message 8136414177 and john@example.com saying hello'")
+    print(f"    • '{CONFIG['wake_word_primary']}: message Mom and dad@example.com that I'll be home late'")
+    
+    # Environment variable setup guide
+    print("\n🔧 Environment Variables Required:")
+    print("  CLAUDE_API_KEY=your_claude_api_key")
+    print("  TWILIO_ACCOUNT_SID=your_twilio_account_sid")
+    print("  TWILIO_AUTH_TOKEN=your_twilio_auth_token")
+    print("  TWILIO_PHONE_NUMBER=your_twilio_phone_number")
+    print("  EMAIL_ADDRESS=your_email@yourdomain.com")
+    print("  EMAIL_PASSWORD=your_email_password")
+    print("  EMAIL_PROVIDER=networksolutions (optional, defaults to networksolutions)")
+    print("  SMTP_SERVER=mail.networksolutions.com (optional, auto-configured)")
+    print("  SMTP_PORT=587 (optional, auto-configured)")
+    print("  EMAIL_NAME=Your Name (optional, defaults to 'Smart AI Agent')")
+    
+    print("\n🎙️ Wake Word Environment Variables (Optional):")
+    print("  WAKE_WORDS='hey ringly,ringly,hey ring,ring' (comma-separated)")
+    print("  WAKE_WORD_PRIMARY='hey ringly' (primary wake word)")
+    print("  WAKE_WORD_ENABLED=true (enable/disable wake word requirement)")
+    print("  WAKE_WORD_CASE_SENSITIVE=false (case sensitivity)")
+    
+    print("\n🔧 Service Reminder API Endpoints:")
+    print("  GET /reminders - Get all reminders")
+    print("  POST /reminders - Create new reminder")
+    print("  GET /reminders/<id> - Get specific reminder")
+    print("  PUT /reminders/<id> - Update reminder")
+    print("  POST /reminders/<id>/complete - Mark as completed")
+    print("  GET /reminders/due - Get due reminders")
+    print("  POST /reminders/check - Manually check and send notifications")
+    print("  POST /reminders/<id>/notify - Send notification for specific reminder")
+    
+    print("\n🎙️ Wake Word API Endpoints:")
+    print("  GET /api/wake-word/config - Get wake word configuration")
+    print("  GET /api/wake-word/examples - Get example commands")
+    print("  POST /api/voice-command - Process voice command with wake word")
+    
+    port = int(os.environ.get("PORT", 10000))
+    
+    print("\n📧 Network Solutions Email Setup:")
+    print("  - Use your full email address (user@yourdomain.com) as EMAIL_ADDRESS")
+    print("  - Use your email account password (not cPanel password)")
+    print("  - Ensure email hosting is active on your Network Solutions plan")
+    print("  - Default SMTP: mail.networksolutions.com:587")
+    print("  - Alternative: mail.yourdomain.com:587 (replace yourdomain.com)")
+    print("  - Test connection with: curl http://localhost:10000/email_info")
+    
+    print("\n🔧 Service Reminder Background Checker:")
+    print("  - Checks for due reminders every hour")
+    print("  - Sends notifications based on notification_days setting")
+    print("  - Prevents spam with 24-hour notification cooldown")
+    print("  - Database: service_reminders.db (SQLite)")
+    
+    print("\n🎙️ Wake Word Testing:")
+    print(f"  - Web Interface: http://localhost:{port}")
+    print(f"  - Test Command: curl -X POST http://localhost:{port}/api/voice-command -H 'Content-Type: application/json' -d '{\"text\": \"{CONFIG['wake_word_primary']}: text John saying hello\"}'")
+    print(f"  - Health Check: curl http://localhost:{port}/health")
+    
+    try:
+        app.run(host="0.0.0.0", port=port, debug=True)
+    finally:
+        # Stop background reminder checker when app shuts down
+        print("\n🛑 Shutting down application...")
+        service_manager.stop_background_checker()
+        print("✅ Application shutdown complete"), status_code
+        
+    except Exception as e:
+        print(f"[API] Voice command error: {e}")
+        return jsonify({
+            "error": "Internal server error processing voice command",
+            "details": str(e)
+        }), 500
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
+    """Health check endpoint with wake word status"""
     twilio_status = "configured" if twilio_client.client else "not configured"
     email_status = "configured" if email_client.email_address and email_client.email_password else "not configured"
     
@@ -2598,12 +3279,17 @@ def health_check():
         "email_status": email_status,
         "claude_configured": bool(CONFIG["claude_api_key"]),
         "service_reminders_enabled": True,
+        "wake_word_enabled": CONFIG["wake_word_enabled"],
+        "wake_word_primary": CONFIG["wake_word_primary"],
+        "wake_words_count": len(CONFIG["wake_words"]),
         "twilio_account_sid": CONFIG["twilio_account_sid"][:8] + "..." if CONFIG["twilio_account_sid"] else "not set",
         "email_address": CONFIG["email_address"] if CONFIG["email_address"] else "not set",
-        "features": ["voice_sms", "voice_email", "multi_recipient_sms", "multi_recipient_email", "mixed_messaging", "message_enhancement", "professional_formatting", "auto_subject_generation", "service_reminders", "reminder_notifications", "background_reminder_checker"]
+        "features": ["wake_word_activation", "voice_sms", "voice_email", "multi_recipient_sms", "multi_recipient_email", 
+                    "mixed_messaging", "message_enhancement", "professional_formatting", "auto_subject_generation", 
+                    "service_reminders", "reminder_notifications", "background_reminder_checker"]
     })
 
-# Service Reminder API Endpoints
+# Service Reminder API Endpoints (unchanged from original)
 
 @app.route('/reminders', methods=['GET'])
 def get_reminders():
@@ -2727,246 +3413,3 @@ def send_reminder_notification(reminder_id):
         service_db.mark_notified(reminder_id)
     
     return jsonify(result)
-
-# Original test endpoints (keeping for backward compatibility)
-
-@app.route('/test_sms', methods=['POST'])
-def test_sms():
-    """Test single SMS endpoint"""
-    data = request.json
-    to = data.get('to')
-    message = data.get('message', 'Test message from Enhanced Flask AI Agent')
-    enhance = data.get('enhance', True)
-    
-    if not to:
-        return jsonify({"error": "Phone number 'to' is required"}), 400
-    
-    # Optionally enhance the message
-    if enhance:
-        enhanced_message = enhance_message_with_claude(message)
-        result = twilio_client.send_sms(to, enhanced_message)
-        result['original_message'] = message
-        result['enhanced_message'] = enhanced_message
-    else:
-        result = twilio_client.send_sms(to, message)
-    
-    return jsonify(result)
-
-@app.route('/test_email', methods=['POST'])
-def test_email():
-    """Test single email endpoint"""
-    data = request.json
-    to = data.get('to')
-    subject = data.get('subject', '')
-    message = data.get('message', 'Test email from Enhanced Flask AI Agent with Email Support')
-    enhance = data.get('enhance', True)
-    
-    if not to:
-        return jsonify({"error": "Email address 'to' is required"}), 400
-    
-    # Optionally enhance the message
-    if enhance:
-        enhanced_message = enhance_message_with_claude(message)
-        if not subject:
-            subject = generate_email_subject(enhanced_message)
-        result = email_client.send_email(to, subject, enhanced_message)
-        result['original_message'] = message
-        result['enhanced_message'] = enhanced_message
-        result['generated_subject'] = subject
-    else:
-        if not subject:
-            subject = "Test Email from Smart AI Agent"
-        result = email_client.send_email(to, subject, message)
-    
-    return jsonify(result)
-
-@app.route('/test_multi_sms', methods=['POST'])
-def test_multi_sms():
-    """Test multi-recipient SMS endpoint"""
-    data = request.json
-    recipients = data.get('recipients', [])  # List of phone numbers
-    message = data.get('message', 'Test multi-recipient message from Enhanced Flask AI Agent')
-    enhance = data.get('enhance', True)
-    
-    if not recipients:
-        return jsonify({"error": "Recipients list is required"}), 400
-    
-    if not isinstance(recipients, list):
-        return jsonify({"error": "Recipients must be a list"}), 400
-    
-    result = send_sms_to_multiple(recipients, message, enhance)
-    return jsonify(result)
-
-@app.route('/test_multi_email', methods=['POST'])
-def test_multi_email():
-    """Test multi-recipient email endpoint"""
-    data = request.json
-    recipients = data.get('recipients', [])  # List of email addresses
-    subject = data.get('subject', '')
-    message = data.get('message', 'Test multi-recipient email from Enhanced Flask AI Agent')
-    enhance = data.get('enhance', True)
-    
-    if not recipients:
-        return jsonify({"error": "Recipients list is required"}), 400
-    
-    if not isinstance(recipients, list):
-        return jsonify({"error": "Recipients must be a list"}), 400
-    
-    result = send_emails_to_multiple(recipients, subject, message, enhance)
-    return jsonify(result)
-
-@app.route('/test_mixed', methods=['POST'])
-def test_mixed():
-    """Test mixed messaging endpoint (SMS + Email)"""
-    data = request.json
-    recipients = data.get('recipients', [])  # Mix of phone numbers and email addresses
-    subject = data.get('subject', '')
-    message = data.get('message', 'Test mixed message from Enhanced Flask AI Agent')
-    enhance = data.get('enhance', True)
-    
-    if not recipients:
-        return jsonify({"error": "Recipients list is required"}), 400
-    
-    if not isinstance(recipients, list):
-        return jsonify({"error": "Recipients must be a list"}), 400
-    
-    result = send_mixed_messages(recipients, message, subject, enhance)
-    return jsonify(result)
-
-@app.route('/enhance_message', methods=['POST'])
-def enhance_message_endpoint():
-    """Endpoint to test message enhancement"""
-    data = request.json
-    message = data.get('message', '')
-    
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-    
-    enhanced = enhance_message_with_claude(message)
-    
-    return jsonify({
-        "original": message,
-        "enhanced": enhanced
-    })
-
-@app.route('/generate_subject', methods=['POST'])
-def generate_subject_endpoint():
-    """Endpoint to test email subject generation"""
-    data = request.json
-    message = data.get('message', '')
-    
-    if not message:
-        return jsonify({"error": "Message is required"}), 400
-    
-    subject = generate_email_subject(message)
-    
-    return jsonify({
-        "message": message,
-        "generated_subject": subject
-    })
-
-@app.route('/twilio_info', methods=['GET'])
-def twilio_info():
-    """Get Twilio account information"""
-    result = twilio_client.get_account_info()
-    return jsonify(result)
-
-@app.route('/email_config', methods=['GET'])
-def email_config():
-    """Get email provider configuration and troubleshooting info"""
-    provider_info = email_client.get_provider_info()
-    current_config = {
-        "current_smtp_server": email_client.smtp_server,
-        "current_smtp_port": email_client.smtp_port,
-        "current_email": email_client.email_address,
-        "current_provider": email_client.email_provider
-    }
-    
-    return jsonify({
-        "current_config": current_config,
-        "provider_info": provider_info,
-        "status": "configured" if email_client.email_address and email_client.email_password else "not configured"
-    })
-
-@app.route('/email_info', methods=['GET'])
-def email_info():
-    """Get email connection test results"""
-    result = email_client.test_connection()
-    return jsonify(result)
-
-if __name__ == '__main__':
-    print("🚀 Starting Enhanced Smart AI Agent Flask App with SMS, Email & Service Reminders")
-    print(f"📱 Twilio Status: {'✅ Connected' if twilio_client.client else '❌ Not configured'}")
-    print(f"📧 Email Status: {'✅ Configured' if email_client.email_address and email_client.email_password else '❌ Not configured'}")
-    print(f"🤖 Claude Status: {'✅ Configured' if CONFIG['claude_api_key'] else '❌ Not configured'}")
-    print(f"🔧 Service Reminders: ✅ Enabled (SQLite Database)")
-    print("✨ Features: Multi-Recipient SMS, Multi-Recipient Email, Mixed Messaging, Professional Voice Processing, Message Enhancement, Auto-Subject Generation, Service Reminders, Background Notifications")
-    print("🔧 Execution order: Service Reminders → Email → Multi-Email → SMS → Multi-SMS → Mixed → Claude fallback")
-    
-    # Start background reminder checker
-    service_manager.start_background_checker()
-    
-    print("\\n📋 Voice Command Examples:")
-    print("  📱 SMS Commands:")
-    print("    • 'Text 8136414177 saying hey how are you'")
-    print("    • 'Send a message to John saying the meeting moved'")
-    print("    • 'Text John and Mary saying the meeting moved to 3pm'")
-    print("  📧 Email Commands:")
-    print("    • 'Email john@example.com saying the meeting is at 3pm'")
-    print("    • 'Email john@example.com with subject meeting update saying the time changed'")
-    print("    • 'Email john@example.com and mary@example.com saying hello everyone'")
-    print("  🔧 Service Reminder Commands:")
-    print("    • 'Remind me to change oil on my 2020 Honda Civic on December 15th'")
-    print("    • 'Set a reminder for brake inspection on my car due in 3 months'")
-    print("    • 'Schedule tire rotation for my Honda at 75000 miles'")
-    print("  🔄 Mixed Commands:")
-    print("    • 'Send a message to 8136414177 and john@example.com saying hello'")
-    print("    • 'Message Mom and dad@example.com that I'll be home late'")
-    
-    # Environment variable setup guide
-    print("\\n🔧 Environment Variables Required:")
-    print("  CLAUDE_API_KEY=your_claude_api_key")
-    print("  TWILIO_ACCOUNT_SID=your_twilio_account_sid")
-    print("  TWILIO_AUTH_TOKEN=your_twilio_auth_token")
-    print("  TWILIO_PHONE_NUMBER=your_twilio_phone_number")
-    print("  EMAIL_ADDRESS=your_email@yourdomain.com")
-    print("  EMAIL_PASSWORD=your_email_password")
-    print("  EMAIL_PROVIDER=networksolutions (optional, defaults to networksolutions)")
-    print("  SMTP_SERVER=mail.networksolutions.com (optional, auto-configured)")
-    print("  SMTP_PORT=587 (optional, auto-configured)")
-    print("  EMAIL_NAME=Your Name (optional, defaults to 'Smart AI Agent')")
-    
-    print("\\n🔧 Service Reminder API Endpoints:")
-    print("  GET /reminders - Get all reminders")
-    print("  POST /reminders - Create new reminder")
-    print("  GET /reminders/<id> - Get specific reminder")
-    print("  PUT /reminders/<id> - Update reminder")
-    print("  POST /reminders/<id>/complete - Mark as completed")
-    print("  GET /reminders/due - Get due reminders")
-    print("  POST /reminders/check - Manually check and send notifications")
-    print("  POST /reminders/<id>/notify - Send notification for specific reminder")
-    
-    port = int(os.environ.get("PORT", 10000))
-    
-    print("\\n📧 Network Solutions Email Setup:")
-    print("  - Use your full email address (user@yourdomain.com) as EMAIL_ADDRESS")
-    print("  - Use your email account password (not cPanel password)")
-    print("  - Ensure email hosting is active on your Network Solutions plan")
-    print("  - Default SMTP: mail.networksolutions.com:587")
-    print("  - Alternative: mail.yourdomain.com:587 (replace yourdomain.com)")
-    print("  - Test connection with: curl http://localhost:10000/email_info")
-    
-    print("\\n🔧 Service Reminder Background Checker:")
-    print("  - Checks for due reminders every hour")
-    print("  - Sends notifications based on notification_days setting")
-    print("  - Prevents spam with 24-hour notification cooldown")
-    print("  - Database: service_reminders.db (SQLite)")
-    
-    port = int(os.environ.get("PORT", 10000))
-    
-    try:
-        app.run(host="0.0.0.0", port=port, debug=True)
-    finally:
-        # Stop background reminder checker when app shuts down
-        service_manager.stop_background_checker() john@example.com saying the meeting is at 3pm"
-• "Email

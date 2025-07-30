@@ -1,4 +1,3 @@
-
 # Enhanced Flask CMP Server with Multi-Recipient Professional Voice SMS & Email Processing + Service Reminders + WAKE WORD ACTIVATION
 from flask import Flask, request, jsonify
 from flask_cors import CORS
@@ -2104,7 +2103,7 @@ self.addEventListener('fetch', event => {
 ''', {'Content-Type': 'application/javascript'}
 
 # ----- Enhanced Mobile HTML Template with Wake Word Support -----
-HTML_TEMPLATE = f"""
+HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -2426,34 +2425,34 @@ HTML_TEMPLATE = f"""
 <body>
   <div class="container">
     <h1>🎙️ Smart AI Agent</h1>
-    <div class="subtitle">Wake word activated - Say "{CONFIG['wake_word_primary']}" to start!</div>
-    <div class="wake-word-badge">🎯 Wake Word: "{CONFIG['wake_word_primary']}"</div>
+    <div class="subtitle">Wake word activated - Say "{wake_word_primary}" to start!</div>
+    <div class="wake-word-badge">🎯 Wake Word: "{wake_word_primary}"</div>
     <div class="feature-badge">✨ Multi-Recipient Messages, Emails & Service Reminders</div>
     
     <div class="input-container">
       <div class="input-group">
-        <input type="text" id="command" placeholder="Type or say: '{CONFIG['wake_word_primary']}: text Ron saying MVP is ready'" />
+        <input type="text" id="command" placeholder="Type or say: '{wake_word_primary}: text Ron saying MVP is ready'" />
         <button onclick="sendCommand()">Send</button>
       </div>
     </div>
 
     <div class="response-container">
-      <div class="response-text" id="response">🎙️ Wake Word System Active! Start commands with "{CONFIG['wake_word_primary']}"
+      <div class="response-text" id="response">🎙️ Wake Word System Active! Start commands with "{wake_word_primary}"
 
 📱 SMS Examples:
-• "{CONFIG['wake_word_primary']}: text 8136414177 saying hey how are you"
-• "{CONFIG['wake_word_primary']}: text John and Mary saying meeting moved to 3pm"
+• "{wake_word_primary}: text 8136414177 saying hey how are you"
+• "{wake_word_primary}: text John and Mary saying meeting moved to 3pm"
 
 📧 Email Examples:
-• "{CONFIG['wake_word_primary']}: email john@example.com saying meeting at 3pm"
-• "{CONFIG['wake_word_primary']}: email john@example.com and mary@example.com saying hello everyone"
+• "{wake_word_primary}: email john@example.com saying meeting at 3pm"
+• "{wake_word_primary}: email john@example.com and mary@example.com saying hello everyone"
 
 🔧 Service Reminder Examples:
-• "{CONFIG['wake_word_primary']}: remind me to change oil on my Honda Civic on December 15th"
-• "{CONFIG['wake_word_primary']}: set reminder for brake inspection on my car due in 3 months"
+• "{wake_word_primary}: remind me to change oil on my Honda Civic on December 15th"
+• "{wake_word_primary}: set reminder for brake inspection on my car due in 3 months"
 
 🔄 Mixed Examples:
-• "{CONFIG['wake_word_primary']}: message 8136414177 and john@example.com saying hello"
+• "{wake_word_primary}: message 8136414177 and john@example.com saying hello"
 
       </div>
     </div>
@@ -2477,7 +2476,7 @@ HTML_TEMPLATE = f"""
     let recognition;
     let isRecording = false;
     let voiceSupported = false;
-    const primaryWakeWord = "{CONFIG['wake_word_primary']}";
+    const primaryWakeWord = "{wake_word_primary}";
 
     // Initialize speech recognition
     function initSpeechRecognition() {{
@@ -2709,7 +2708,12 @@ Or try:
 
 @app.route("/")
 def root():
-    return HTML_TEMPLATE
+    # Build the HTML template with proper substitution
+    html_content = HTML_TEMPLATE.format(
+        wake_word_primary=CONFIG['wake_word_primary'],
+        wake_words=', '.join(CONFIG['wake_words'])
+    )
+    return html_content
 
 @app.route('/execute', methods=['POST'])
 def execute():

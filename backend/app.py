@@ -406,8 +406,14 @@ class ServiceReminderManager:
         self.scheduler = None
     
     def start_background_checker(self):
-        """Start background thread to check for due reminders - simplified for deployment"""
+        """Start background thread to check for due reminders - deployment safe"""
         if self.running:
+            return
+        
+        # Skip background checker in production to avoid threading issues
+        if os.environ.get('RENDER') or os.environ.get('PRODUCTION'):
+            print("🏭 Production mode detected - skipping background checker")
+            print("📝 Use /reminders/check endpoint to manually check reminders")
             return
         
         try:

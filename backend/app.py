@@ -321,6 +321,14 @@ def get_html_template():
         .control-button.stop {{ background: linear-gradient(45deg, #dc3545, #c82333); }}
         .control-button.test {{ background: linear-gradient(45deg, #28a745, #20c997); }}
         .control-button:disabled {{ background: #6c757d; cursor: not-allowed; transform: none; box-shadow: none; }}
+        .manual-input {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; }}
+        .manual-input h3 {{ margin-bottom: 15px; text-align: center; }}
+        .input-group {{ display: flex; gap: 10px; align-items: center; }}
+        .text-input {{ flex: 1; padding: 12px 15px; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(255, 255, 255, 0.1); color: white; font-size: 1em; outline: none; transition: all 0.3s ease; }}
+        .text-input:focus {{ border-color: #007bff; background: rgba(255, 255, 255, 0.15); }}
+        .text-input::placeholder {{ color: rgba(255, 255, 255, 0.6); }}
+        .send-button {{ background: linear-gradient(45deg, #28a745, #20c997); color: white; border: none; padding: 12px 25px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; transition: all 0.3s ease; }}
+        .send-button:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4); }}
         .transcription {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; border: 2px solid transparent; transition: all 0.3s ease; }}
         .transcription.active {{ border-color: #28a745; background: rgba(40, 167, 69, 0.1); }}
         .transcription h3 {{ font-size: 1.1em; margin-bottom: 10px; opacity: 0.8; }}
@@ -335,7 +343,7 @@ def get_html_template():
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
         .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
         .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
-        @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header h1 {{ font-size: 2em; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} }}
+        @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header h1 {{ font-size: 2em; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} .input-group {{ flex-direction: column; gap: 15px; }} .text-input {{ width: 100%; margin-bottom: 10px; }} .send-button {{ width: 100%; }} }}
     </style>
 </head>
 <body>
@@ -359,6 +367,13 @@ def get_html_template():
             <div class="transcription-text" id="transcriptionText">Waiting for wake word command...</div>
         </div>
         <div id="response" class="response"></div>
+        <div class="manual-input">
+            <h3>⌨️ Type Command Manually</h3>
+            <div class="input-group">
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Ringly text 6566001400 saying hello from text input"' />
+                <button class="send-button" onclick="sendManualCommand()">Send</button>
+            </div>
+        </div>
         <div class="examples">
             <h3>📝 Voice Commands (Any pronunciation works!)</h3>
             <ul>
@@ -620,6 +635,32 @@ def get_html_template():
             console.log('Testing SMS with command:', testCommand);
             processWakeWordCommand(testCommand);
         }}
+
+        function sendManualCommand() {{
+            const manualInput = document.getElementById('manualCommand');
+            const command = manualInput.value.trim();
+            
+            if (!command) {{
+                alert('Please enter a command');
+                return;
+            }}
+            
+            console.log('Sending manual command:', command);
+            processWakeWordCommand(command);
+            manualInput.value = ''; // Clear input after sending
+        }}
+
+        // Allow Enter key to send manual command
+        document.addEventListener('DOMContentLoaded', function() {{
+            const manualInput = document.getElementById('manualCommand');
+            if (manualInput) {{
+                manualInput.addEventListener('keypress', function(e) {{
+                    if (e.key === 'Enter') {{
+                        sendManualCommand();
+                    }}
+                }});
+            }}
+        }});
 
         function startListening() {{
             if (!recognition) {{

@@ -1,4 +1,63 @@
-# Minimal Flask Wake Word App - SMS Focus with Always Listening Frontend
+function checkForWakeWord(text) {{
+            const lowerText = text.toLowerCase().trim();
+            // Add ALL the variations speech recognition actually hears
+            const wakeWords = [
+                'hey ringly', 'hey ring', 'ringly', 
+                'hey wrinkly', 'wrinkly', 'hey wrinkle',
+                'hey wrigley', 'wrigley', 
+                'hey ringley', 'ringley',
+                'hey ringling', 'ringling',
+                'hey wrigly', 'wrigly'
+            ];
+            let wakeWordFound = false;
+            let detectedWakeWord = '';
+            console.log('Checking for wake word in:', text);
+            console.log('Available wake words:', wakeWords);
+            
+            for (const wakeWord of wakeWords) {{
+                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
+                if (lowerText.includes(wakeWord)) {{
+                    wakeWordFound = true;
+                    detectedWakeWord = wakeWord;
+                    console.log('✅ Wake word FOUND:', wakeWord);
+                    break;
+                }}
+            }}
+            
+            if (wakeWordFound) {{
+                console.log('🚀 Processing wake word command:', text);
+                processWakeWordCommand(text);
+            }} else {{
+                console.log('❌ No wake word found in:', text);
+                console.log('Expected one of:', wakeWords);
+            }}
+        }}</Parameter>
+<parameter name="old_str">        function checkForWakeWord(text) {{
+            const lowerText = text.toLowerCase().trim();
+            const wakeWords = ['hey ringly', 'hey ring', 'ringly', 'hey wrinkly', 'wrinkly', 'hey wrinkle'];
+            let wakeWordFound = false;
+            let detectedWakeWord = '';
+            console.log('Checking for wake word in:', text);
+            console.log('Available wake words:', wakeWords);
+            
+            for (const wakeWord of wakeWords) {{
+                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
+                if (lowerText.includes(wakeWord)) {{
+                    wakeWordFound = true;
+                    detectedWakeWord = wakeWord;
+                    console.log('✅ Wake word FOUND:', wakeWord);
+                    break;
+                }}
+            }}
+            
+            if (wakeWordFound) {{
+                console.log('🚀 Processing wake word command:', text);
+                processWakeWordCommand(text);
+            }} else {{
+                console.log('❌ No wake word found in:', text);
+                console.log('Expected one of:', wakeWords);
+            }}
+        }}# Minimal Flask Wake Word App - SMS Focus with Always Listening Frontend
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -391,10 +450,11 @@ def get_html_template():
         <div class="examples">
             <h3>📝 Voice Commands</h3>
             <ul>
-                <li>"{primary_wake_word}: text 5551234567 saying hello there!"</li>
-                <li>"{primary_wake_word}: text Mom saying running late"</li>
-                <li>"{primary_wake_word}: send message to John saying meeting at 3pm"</li>
-                <li>"{primary_wake_word}: text 8136414177 saying voice test working"</li>
+                <li>"Hey Ringly: text 6566001400 saying hello there!"</li>
+                <li>"Hey Ring: text Mom saying running late"</li> 
+                <li>"Hey Wrinkly: send message to John saying meeting at 3pm"</li>
+                <li>"Hey Wrigley: text 8136414177 saying voice test working"</li>
+                <li><strong>Try any variation - the system adapts to your pronunciation!</strong></li>
             </ul>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
@@ -424,6 +484,13 @@ def get_html_template():
                 recognition.interimResults = true;
                 recognition.lang = 'en-US';
                 recognition.maxAlternatives = 1;
+                
+                // Try to capture longer phrases
+                recognition.grammars = null; // No grammar restrictions
+                
+                // Add a small buffer to capture complete commands
+                let commandBuffer = '';
+                let bufferTimeout = null;
 
                 recognition.onstart = function() {{
                     console.log('Speech recognition started');
@@ -442,15 +509,43 @@ def get_html_template():
                             interimTranscript += transcript;
                         }}
                     }}
+                    
                     const currentText = (finalTranscript + interimTranscript).trim();
                     if (currentText) {{
                         transcriptionText.textContent = currentText;
                         transcription.classList.add('active');
                         console.log('Speech detected:', currentText);
                     }}
+                    
                     if (finalTranscript && !isProcessingCommand) {{
                         console.log('Final transcript received:', finalTranscript.trim());
-                        checkForWakeWord(finalTranscript.trim());
+                        
+                        // Add to command buffer
+                        commandBuffer += finalTranscript.trim() + ' ';
+                        console.log('Command buffer now:', commandBuffer);
+                        
+                        // Clear any existing timeout
+                        if (bufferTimeout) {{
+                            clearTimeout(bufferTimeout);
+                        }}
+                        
+                        // Check if we have a wake word in the buffer
+                        const hasWakeWord = checkForWakeWordInBuffer(commandBuffer);
+                        
+                        if (hasWakeWord) {{
+                            // Wait a bit longer to capture the full command
+                            bufferTimeout = setTimeout(() => {{
+                                console.log('Processing complete command from buffer:', commandBuffer);
+                                checkForWakeWord(commandBuffer.trim());
+                                commandBuffer = ''; // Clear buffer after processing
+                            }}, 2000); // Wait 2 seconds for complete command
+                        }} else {{
+                            // No wake word, clear buffer after short delay
+                            bufferTimeout = setTimeout(() => {{
+                                commandBuffer = '';
+                                console.log('Buffer cleared - no wake word found');
+                            }}, 3000);
+                        }}
                     }}
                 }};
 

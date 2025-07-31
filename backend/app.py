@@ -600,6 +600,9 @@ def get_html_template():
             <button class="control-button stop" id="stopButton" onclick="stopListening()" disabled>
                 Stop Listening
             </button>
+            <button class="control-button" onclick="testSMS()" style="background: linear-gradient(45deg, #28a745, #20c997);">
+                Test SMS
+            </button>
         </div>
 
         <div class="transcription" id="transcription">
@@ -820,6 +823,12 @@ def get_html_template():
                 }}, 10000);
             }}
         }}
+
+        function testSMS() {
+            const testCommand = "hey ringly: text 6566001400 saying test message from wake word system";
+            console.log('Testing SMS with command:', testCommand);
+            processWakeWordCommand(testCommand);
+        }
 
         function startListening() {{
             if (!recognition) {{

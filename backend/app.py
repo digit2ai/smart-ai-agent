@@ -300,6 +300,7 @@ def get_html_template():
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
         .container {{ background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; }}
         .header h1 {{ font-size: 2.5em; margin-bottom: 10px; font-weight: 700; }}
+        .header img {{ max-height: 80px; margin-bottom: 10px; }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; }}
 
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
@@ -340,13 +341,13 @@ def get_html_template():
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
         .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
         .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
-        @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header h1 {{ font-size: 2em; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} .input-group {{ flex-direction: column; gap: 15px; }} .text-input {{ width: 100%; margin-bottom: 10px; }} .send-button {{ width: 100%; }} }}
+        @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header img {{ max-height: 60px; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} .input-group {{ flex-direction: column; gap: 15px; }} .text-input {{ width: 100%; margin-bottom: 10px; }} .send-button {{ width: 100%; }} }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>🎙️ Wake Word SMS</h1>
+            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/6884f40a6d2fd3fed0b84613.png" alt="Wake Word SMS Logo" />
             <p>Enhanced voice recognition - adapts to your pronunciation!</p>
         </div>
 

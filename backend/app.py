@@ -1081,6 +1081,8 @@ except Exception as e:
     print(f"❌ Service reminder manager failed: {e}")
     service_manager = None
 
+print("🔍 Starting function definitions...", flush=True)
+
 def call_claude(prompt, use_enhancement_prompt=False, use_subject_prompt=False, original_message="", message_content=""):
     """Call Claude API with different prompts based on use case"""
     try:
@@ -1122,6 +1124,8 @@ def call_claude(prompt, use_enhancement_prompt=False, use_subject_prompt=False, 
     except Exception as e:
         return {"error": str(e)}
 
+print("✅ call_claude function defined", flush=True)
+
 def enhance_message_with_claude(message: str) -> str:
     """Enhance a message using Claude AI"""
     try:
@@ -1135,6 +1139,8 @@ def enhance_message_with_claude(message: str) -> str:
         print(f"Error enhancing message: {e}")
         return message  # Return original if enhancement fails
 
+print("✅ enhance_message_with_claude function defined", flush=True)
+
 def generate_email_subject(message: str) -> str:
     """Generate email subject using Claude AI"""
     try:
@@ -1147,6 +1153,8 @@ def generate_email_subject(message: str) -> str:
     except Exception as e:
         print(f"Error generating subject: {e}")
         return "Message from Smart AI Agent"
+
+print("✅ generate_email_subject function defined", flush=True)
 
 def is_phone_number(recipient: str) -> bool:
     """Check if recipient looks like a phone number"""
@@ -1164,7 +1172,968 @@ def is_phone_number(recipient: str) -> bool:
 def is_email_address(recipient: str) -> bool:
     """Check if recipient looks like an email address"""
     # Simple email validation
-    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
+    email_pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}
+
+def parse_recipients(recipients_text: str) -> List[str]:
+    """Parse multiple recipients from text"""
+    
+    # Clean up the text
+    recipients_text = recipients_text.strip()
+    
+    # Handle different separators and conjunctions
+    # Replace common conjunctions with commas
+    recipients_text = re.sub(r'\s+and\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s+&\s+', ', ', recipients_text)
+    recipients_text = re.sub(r'\s*,\s*and\s+', ', ', recipients_text)
+    
+    # Split by comma and clean up
+    recipients = [r.strip() for r in recipients_text.split(',')]
+    
+    # Remove empty strings
+    recipients = [r for r in recipients if r]
+    
+    return recipients
+
+def clean_voice_message(message: str) -> str:
+    """Clean up voice recognition artifacts"""
+    message = message.replace(" period", ".").replace(" comma", ",")
+    message = message.replace(" question mark", "?").replace(" exclamation mark", "!")
+    return message.strip()
+
+print("✅ Voice processing functions defined", flush=True)
+
+def extract_service_reminder_command(text: str) -> Dict[str, Any]:
+    """Extract service reminder command from voice input"""
+    # Common patterns for service reminder commands
+    patterns = [
+        # "Remind me to change oil on my 2020 Honda Civic on December 15th"
+        r'remind me to (.+?) (?:on|for) my (.+?) (?:on|by) (.+)',
+        # "Set a reminder for oil change on my Honda at 75000 miles"
+        r'set (?:a )?reminder for (.+?) (?:on|for) my (.+?) at (\d+) miles',
+        # "Schedule oil change for December 15th for my Honda Civic"
+        r'schedule (.+?) for (.+?) for my (.+)',
+        # "Create service reminder for brake inspection on my car due January 1st"
+        r'create (?:service )?reminder for (.+?) (?:on|for) my (.+?) due (.+)',
+        # "Add oil change reminder for my Honda Civic due in 3 months"
+        r'add (.+?) reminder for my (.+?) due (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) >= 3:
+                service_desc = groups[0].strip()
+                vehicle_info = groups[1].strip()
+                due_info = groups[2].strip()
+                
+                # Determine service type from description
+                service_type = determine_service_type(service_desc)
+                
+                # Parse due date
+                due_date = parse_due_date(due_info)
+                
+                return {
+                    "action": "create_service_reminder",
+                    "service_type": service_type,
+                    "vehicle_info": vehicle_info,
+                    "description": service_desc,
+                    "due_date": due_date,
+                    "contact_method": "sms",  # Default
+                    "contact_info": "",  # Will be filled from user profile
+                    "notification_days": 7
+                }
+    
+    return None
+
+def determine_service_type(description: str) -> str:
+    """Determine service type from description"""
+    desc_lower = description.lower()
+    
+    service_mappings = {
+        "oil": ServiceType.OIL_CHANGE.value,
+        "tire": ServiceType.TIRE_ROTATION.value,
+        "brake": ServiceType.BRAKE_INSPECTION.value,
+        "air filter": ServiceType.AIR_FILTER.value,
+        "transmission": ServiceType.TRANSMISSION.value,
+        "coolant": ServiceType.COOLANT.value,
+        "tune": ServiceType.TUNE_UP.value,
+        "inspection": ServiceType.INSPECTION.value,
+        "registration": ServiceType.REGISTRATION.value,
+        "insurance": ServiceType.INSURANCE.value,
+    }
+    
+    for keyword, service_type in service_mappings.items():
+        if keyword in desc_lower:
+            return service_type
+    
+    return ServiceType.CUSTOM.value
+
+def parse_due_date(due_info: str) -> str:
+    """Parse due date from various formats"""
+    due_info = due_info.lower().strip()
+    
+    try:
+        # Handle relative dates
+        if "month" in due_info:
+            if "in" in due_info:
+                # "in 3 months"
+                months = re.search(r'(\d+)', due_info)
+                if months:
+                    months_count = int(months.group(1))
+                    future_date = datetime.now() + timedelta(days=months_count * 30)
+                    return future_date.isoformat()
+        
+        if "week" in due_info:
+            if "in" in due_info:
+                # "in 2 weeks"
+                weeks = re.search(r'(\d+)', due_info)
+                if weeks:
+                    weeks_count = int(weeks.group(1))
+                    future_date = datetime.now() + timedelta(weeks=weeks_count)
+                    return future_date.isoformat()
+        
+        if "day" in due_info:
+            if "in" in due_info:
+                # "in 10 days"
+                days = re.search(r'(\d+)', due_info)
+                if days:
+                    days_count = int(days.group(1))
+                    future_date = datetime.now() + timedelta(days=days_count)
+                    return future_date.isoformat()
+        
+        # Handle specific date formats
+        # Try to parse common date formats
+        date_patterns = [
+            r'(\d{1,2})/(\d{1,2})/(\d{4})',  # MM/DD/YYYY
+            r'(\d{1,2})-(\d{1,2})-(\d{4})',  # MM-DD-YYYY
+            r'(\w+) (\d{1,2})(?:st|nd|rd|th)?,? (\d{4})?',  # Month DD, YYYY
+        ]
+        
+        for pattern in date_patterns:
+            match = re.search(pattern, due_info)
+            if match:
+                groups = match.groups()
+                if len(groups) == 3:
+                    if groups[0].isdigit():  # MM/DD/YYYY format
+                        month, day, year = int(groups[0]), int(groups[1]), int(groups[2])
+                    else:  # Month name format
+                        month_name = groups[0].capitalize()
+                        day = int(groups[1])
+                        year = int(groups[2]) if groups[2] else datetime.now().year
+                        
+                        month_map = {
+                            'January': 1, 'February': 2, 'March': 3, 'April': 4,
+                            'May': 5, 'June': 6, 'July': 7, 'August': 8,
+                            'September': 9, 'October': 10, 'November': 11, 'December': 12
+                        }
+                        month = month_map.get(month_name, 1)
+                    
+                    parsed_date = datetime(year, month, day)
+                    return parsed_date.isoformat()
+        
+        # Default to 30 days from now if parsing fails
+        default_date = datetime.now() + timedelta(days=30)
+        return default_date.isoformat()
+        
+    except Exception as e:
+        print(f"Error parsing due date '{due_info}': {e}")
+        # Default to 30 days from now
+        default_date = datetime.now() + timedelta(days=30)
+        return default_date.isoformat()
+
+print("✅ Command extraction functions defined", flush=True)
+
+def extract_email_command(text: str) -> Dict[str, Any]:
+    """Extract email command from voice input"""
+    # Common patterns for email commands
+    patterns = [
+        r'send (?:an )?email to (.+?) (?:with subject (.+?) )?saying (.+)',
+        r'email (.+?) (?:with subject (.+?) )?saying (.+)',
+        r'send (.+?) (?:an )?email (?:with subject (.+?) )?saying (.+)',
+        r'email (.+?) that (.+)',
+        r'send (?:an )?email to (.+?) (.+)',  # Simple pattern: "email john@example.com hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) == 3 and groups[1]:  # Has subject
+                recipient = groups[0].strip()
+                subject = groups[1].strip()
+                message = groups[2].strip()
+            elif len(groups) == 3:  # No subject in middle
+                recipient = groups[0].strip()
+                subject = None
+                message = groups[2].strip()
+            else:  # Simple pattern
+                recipient = groups[0].strip()
+                subject = None
+                message = groups[1].strip()
+            
+            # Clean up common voice recognition artifacts
+            message = clean_voice_message(message)
+            if subject:
+                subject = clean_voice_message(subject)
+            
+            return {
+                "action": "send_email",
+                "recipient": recipient,
+                "subject": subject,
+                "message": message,
+                "original_message": message
+            }
+    
+    return None
+
+def extract_sms_command(text: str) -> Dict[str, str]:
+    """Extract SMS command from voice input using pattern matching (ORIGINAL WORKING VERSION)"""
+    # Common patterns for SMS commands
+    patterns = [
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        r'text (.+?) saying (.+)',
+        r'message (.+?) saying (.+)',
+        r'send (.+?) the message (.+)',
+        r'tell (.+?) that (.+)',
+        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Clean up common voice recognition artifacts
+            message = clean_voice_message(message)
+            
+            return {
+                "action": "send_message",
+                "recipient": recipient,
+                "message": message,
+                "original_message": message
+            }
+    
+    return None
+
+def extract_sms_command_multi(text: str) -> Dict[str, Any]:
+    """Enhanced SMS command extraction supporting multiple recipients"""
+    
+    # Patterns for multiple recipients
+    multi_patterns = [
+        # "send a text to John and Mary saying hello"
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        # "text John, Mary, and Bob saying hello"
+        r'text (.+?) saying (.+)',
+        # "message John and Mary that we're running late"
+        r'message (.+?) (?:that|saying) (.+)',
+        # "tell John, Mary, and Bob that the meeting moved"
+        r'tell (.+?) that (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in multi_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipients_text = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Parse multiple recipients
+            recipients = parse_recipients(recipients_text)
+            
+            # Clean up voice recognition artifacts
+            message = clean_voice_message(message)
+            
+            # Check if multiple recipients
+            if len(recipients) > 1:
+                return {
+                    "action": "send_message_multi",
+                    "recipients": recipients,
+                    "message": message,
+                    "original_message": message
+                }
+            else:
+                # Single recipient - use original format
+                return {
+                    "action": "send_message",
+                    "recipient": recipients[0] if recipients else recipients_text,
+                    "message": message,
+                    "original_message": message
+                }
+    
+    return None
+
+def extract_email_command_multi(text: str) -> Dict[str, Any]:
+    """Enhanced email command extraction supporting multiple recipients"""
+    
+    # Patterns for multiple email recipients
+    multi_patterns = [
+        # "send an email to john@example.com and mary@example.com saying hello"
+        r'send (?:an )?email to (.+?) (?:with subject (.+?) )?saying (.+)',
+        # "email john@example.com, mary@example.com saying hello"
+        r'email (.+?) saying (.+)',
+        # "send john@example.com and mary@example.com an email saying hello"
+        r'send (.+?) (?:an )?email saying (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in multi_patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            groups = match.groups()
+            
+            if len(groups) == 3 and groups[1]:  # Has subject
+                recipients_text = groups[0].strip()
+                subject = groups[1].strip()
+                message = groups[2].strip()
+            else:  # No subject
+                recipients_text = groups[0].strip()
+                subject = None
+                message = groups[-1].strip()
+            
+            # Parse multiple recipients
+            recipients = parse_recipients(recipients_text)
+            
+            # Clean up voice recognition artifacts
+            message = clean_voice_message(message)
+            if subject:
+                subject = clean_voice_message(subject)
+            
+            # Check if multiple recipients
+            if len(recipients) > 1:
+                return {
+                    "action": "send_email_multi",
+                    "recipients": recipients,
+                    "subject": subject,
+                    "message": message,
+                    "original_message": message
+                }
+            else:
+                # Single recipient - use original format
+                return {
+                    "action": "send_email",
+                    "recipient": recipients[0] if recipients else recipients_text,
+                    "subject": subject,
+                    "message": message,
+                    "original_message": message
+                }
+    
+    return None
+
+def send_single_sms(recipient: str, message: str) -> Dict[str, Any]:
+    """Send SMS to a single recipient"""
+    
+    if is_phone_number(recipient):
+        formatted_phone = format_phone_number(recipient)
+        result = twilio_client.send_sms(formatted_phone, message)
+        result['formatted_recipient'] = formatted_phone
+        result['original_recipient'] = recipient
+        result['type'] = 'sms'
+        return result
+    else:
+        return {
+            "success": False,
+            "error": f"Invalid phone number format: {recipient}",
+            "original_recipient": recipient,
+            "type": 'sms'
+        }
+
+def send_single_email(recipient: str, subject: str, message: str) -> Dict[str, Any]:
+    """Send email to a single recipient"""
+    
+    if is_email_address(recipient):
+        result = email_client.send_email(recipient, subject, message)
+        result['original_recipient'] = recipient
+        result['type'] = 'email'
+        return result
+    else:
+        return {
+            "success": False,
+            "error": f"Invalid email address format: {recipient}",
+            "original_recipient": recipient,
+            "type": 'email'
+        }
+
+def send_sms_to_multiple(recipients: List[str], message: str, enhance: bool = True) -> Dict[str, Any]:
+    """Send SMS to multiple recipients with threading for better performance"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    
+    # Use ThreadPoolExecutor for concurrent SMS sending
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all SMS tasks
+        future_to_recipient = {
+            executor.submit(send_single_sms, recipient, enhanced_message): recipient 
+            for recipient in recipients
+        }
+        
+        # Collect results
+        for future in concurrent.futures.as_completed(future_to_recipient):
+            recipient = future_to_recipient[future]
+            try:
+                result = future.result()
+                result['recipient'] = recipient
+                results.append(result)
+                
+                if result.get('success'):
+                    successful_sends += 1
+                else:
+                    failed_sends += 1
+                    
+            except Exception as exc:
+                error_result = {
+                    'recipient': recipient,
+                    'success': False,
+                    'error': f'Exception occurred: {exc}',
+                    'type': 'sms'
+                }
+                results.append(error_result)
+                failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": len(recipients),
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "results": results,
+        "type": "sms_multi"
+    }
+
+def send_emails_to_multiple(recipients: List[str], subject: str, message: str, enhance: bool = True) -> Dict[str, Any]:
+    """Send emails to multiple recipients with threading for better performance"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    # Generate subject if not provided
+    if not subject:
+        subject = generate_email_subject(enhanced_message)
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    
+    # Use ThreadPoolExecutor for concurrent email sending
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        # Submit all email tasks
+        future_to_recipient = {
+            executor.submit(send_single_email, recipient, subject, enhanced_message): recipient 
+            for recipient in recipients
+        }
+        
+        # Collect results
+        for future in concurrent.futures.as_completed(future_to_recipient):
+            recipient = future_to_recipient[future]
+            try:
+                result = future.result()
+                result['recipient'] = recipient
+                results.append(result)
+                
+                if result.get('success'):
+                    successful_sends += 1
+                else:
+                    failed_sends += 1
+                    
+            except Exception as exc:
+                error_result = {
+                    'recipient': recipient,
+                    'success': False,
+                    'error': f'Exception occurred: {exc}',
+                    'type': 'email'
+                }
+                results.append(error_result)
+                failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": len(recipients),
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "subject": subject,
+        "results": results,
+        "type": "email_multi"
+    }
+
+def send_mixed_messages(recipients: List[str], message: str, subject: str = None, enhance: bool = True) -> Dict[str, Any]:
+    """Send messages to mixed recipients (SMS for phones, emails for email addresses)"""
+    
+    if not recipients:
+        return {"error": "No recipients provided"}
+    
+    # Separate recipients by type
+    phone_recipients = []
+    email_recipients = []
+    other_recipients = []
+    
+    for recipient in recipients:
+        if is_phone_number(recipient):
+            phone_recipients.append(recipient)
+        elif is_email_address(recipient):
+            email_recipients.append(recipient)
+        else:
+            other_recipients.append(recipient)
+    
+    # Enhance message once if requested
+    enhanced_message = enhance_message_with_claude(message) if enhance else message
+    
+    results = []
+    successful_sends = 0
+    failed_sends = 0
+    total_recipients = len(recipients)
+    
+    # Send SMS to phone numbers
+    if phone_recipients:
+        sms_result = send_sms_to_multiple(phone_recipients, message, enhance=False)  # Already enhanced
+        results.extend(sms_result.get('results', []))
+        successful_sends += sms_result.get('successful_sends', 0)
+        failed_sends += sms_result.get('failed_sends', 0)
+    
+    # Send emails to email addresses
+    if email_recipients:
+        email_result = send_emails_to_multiple(email_recipients, subject, message, enhance=False)  # Already enhanced
+        results.extend(email_result.get('results', []))
+        successful_sends += email_result.get('successful_sends', 0)
+        failed_sends += email_result.get('failed_sends', 0)
+    
+    # Log other recipients
+    for recipient in other_recipients:
+        results.append({
+            'recipient': recipient,
+            'success': False,
+            'error': 'Unrecognized recipient format (not phone or email)',
+            'type': 'unknown'
+        })
+        failed_sends += 1
+    
+    return {
+        "success": successful_sends > 0,
+        "total_recipients": total_recipients,
+        "successful_sends": successful_sends,
+        "failed_sends": failed_sends,
+        "phone_recipients": len(phone_recipients),
+        "email_recipients": len(email_recipients),
+        "other_recipients": len(other_recipients),
+        "original_message": message,
+        "enhanced_message": enhanced_message,
+        "subject": subject,
+        "results": results,
+        "type": "mixed_multi"
+    }
+
+print("✅ Messaging functions defined (SMS/Email/Mixed)", flush=True)
+
+# ----- CMP Action Handlers -----
+
+def handle_create_task(data):
+    print("[CMP] Creating task:", data.get("title"), data.get("due_date"))
+    return f"Task '{data.get('title')}' scheduled for {data.get('due_date')}."
+
+def handle_create_appointment(data):
+    print("[CMP] Creating appointment:", data.get("title"), data.get("due_date"))
+    return f"Appointment '{data.get('title')}' booked for {data.get('due_date')}."
+
+def handle_create_service_reminder(data):
+    """Handle creating a new service reminder"""
+    try:
+        reminder = ServiceReminder(
+            service_type=data.get("service_type", ServiceType.CUSTOM.value),
+            vehicle_info=data.get("vehicle_info", ""),
+            description=data.get("description", ""),
+            due_date=data.get("due_date", ""),
+            due_mileage=data.get("due_mileage"),
+            current_mileage=data.get("current_mileage"),
+            contact_method=data.get("contact_method", "sms"),
+            contact_info=data.get("contact_info", ""),
+            notification_days=data.get("notification_days", 7),
+            notes=data.get("notes", "")
+        )
+        
+        # Validate required fields
+        if not reminder.vehicle_info:
+            return "❌ Vehicle information is required for service reminders"
+        
+        if not reminder.due_date:
+            return "❌ Due date is required for service reminders"
+        
+        if not reminder.contact_info:
+            return "❌ Contact information is required for notifications"
+        
+        # Create the reminder
+        result = service_db.create_reminder(reminder)
+        
+        if result["success"]:
+            service_name = reminder.service_type.replace('_', ' ').title()
+            due_date_formatted = datetime.fromisoformat(reminder.due_date).strftime('%m/%d/%Y')
+            
+            response = f"✅ Service reminder created!\n\n"
+            response += f"🚗 Vehicle: {reminder.vehicle_info}\n"
+            response += f"🔧 Service: {service_name}\n"
+            response += f"📅 Due Date: {due_date_formatted}\n"
+            response += f"📱 Notifications: {reminder.contact_method} to {reminder.contact_info}\n"
+            response += f"⏰ Reminder: {reminder.notification_days} days before due date\n"
+            response += f"🆔 Reminder ID: {result['reminder_id']}\n"
+            
+            if reminder.description:
+                response += f"📋 Description: {reminder.description}\n"
+            
+            if reminder.due_mileage:
+                response += f"🛣️ Due at: {reminder.due_mileage:,} miles\n"
+                if reminder.current_mileage:
+                    miles_remaining = reminder.due_mileage - reminder.current_mileage
+                    response += f"📊 Current: {reminder.current_mileage:,} miles ({miles_remaining:,} remaining)\n"
+            
+            return response
+        else:
+            return f"❌ Failed to create service reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error creating service reminder: {str(e)}"
+
+def handle_update_service_reminder(data):
+    """Handle updating an existing service reminder"""
+    try:
+        reminder_id = data.get("reminder_id")
+        if not reminder_id:
+            return "❌ Reminder ID is required for updates"
+        
+        # Build updates dictionary
+        updates = {}
+        
+        # Map of data fields to database fields
+        update_fields = [
+            "service_type", "vehicle_info", "description", "due_date",
+            "due_mileage", "current_mileage", "contact_method", 
+            "contact_info", "notification_days", "notes"
+        ]
+        
+        for field in update_fields:
+            if field in data and data[field] is not None:
+                updates[field] = data[field]
+        
+        if not updates:
+            return "❌ No updates specified"
+        
+        result = service_db.update_reminder(reminder_id, updates)
+        
+        if result["success"]:
+            response = f"✅ Service reminder #{reminder_id} updated successfully!\n\n"
+            response += "📝 Updated fields:\n"
+            
+            for field, value in updates.items():
+                field_name = field.replace('_', ' ').title()
+                if field == "due_date" and value:
+                    try:
+                        formatted_date = datetime.fromisoformat(value).strftime('%m/%d/%Y')
+                        response += f"• {field_name}: {formatted_date}\n"
+                    except:
+                        response += f"• {field_name}: {value}\n"
+                elif field == "service_type":
+                    service_name = value.replace('_', ' ').title()
+                    response += f"• {field_name}: {service_name}\n"
+                elif field in ["due_mileage", "current_mileage"] and value:
+                    response += f"• {field_name}: {value:,} miles\n"
+                else:
+                    response += f"• {field_name}: {value}\n"
+            
+            return response
+        else:
+            return f"❌ Failed to update reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error updating service reminder: {str(e)}"
+
+def handle_complete_service_reminder(data):
+    """Handle marking a service reminder as completed"""
+    try:
+        reminder_id = data.get("reminder_id")
+        if not reminder_id:
+            return "❌ Reminder ID is required to mark as completed"
+        
+        completion_notes = data.get("notes", f"Service completed on {datetime.now().strftime('%m/%d/%Y')}")
+        
+        # Get reminder details before completing
+        reminder = service_db.get_reminder(reminder_id)
+        if not reminder:
+            return f"❌ Service reminder #{reminder_id} not found"
+        
+        result = service_db.complete_reminder(reminder_id, completion_notes)
+        
+        if result["success"]:
+            service_name = reminder.service_type.replace('_', ' ').title()
+            
+            response = f"✅ Service reminder completed!\n\n"
+            response += f"🚗 Vehicle: {reminder.vehicle_info}\n"
+            response += f"🔧 Service: {service_name}\n"
+            response += f"📅 Was Due: {datetime.fromisoformat(reminder.due_date).strftime('%m/%d/%Y')}\n"
+            response += f"✅ Completed: {datetime.now().strftime('%m/%d/%Y')}\n"
+            response += f"📝 Notes: {completion_notes}\n"
+            response += f"🆔 Reminder ID: {reminder_id}"
+            
+            return response
+        else:
+            return f"❌ Failed to complete reminder: {result['error']}"
+            
+    except Exception as e:
+        return f"❌ Error completing service reminder: {str(e)}"
+
+def handle_send_message(data):
+    recipient = data.get("recipient", "")
+    message = data.get("message", "")
+    original_message = data.get("original_message", message)
+    
+    print(f"[CMP] Sending message to {recipient}")
+    
+    # Check if recipient is a phone number
+    if is_phone_number(recipient):
+        # Format phone number
+        formatted_phone = format_phone_number(recipient)
+        print(f"[CMP] Detected phone number, processing SMS to {formatted_phone}")
+        
+        # Enhance the message using Claude AI
+        print(f"[CMP] Original message: {original_message}")
+        enhanced_message = enhance_message_with_claude(original_message)
+        print(f"[CMP] Enhanced message: {enhanced_message}")
+        
+        # Send the enhanced message
+        result = twilio_client.send_sms(formatted_phone, enhanced_message)
+        
+        if "error" in result:
+            return f"Failed to send SMS to {recipient}: {result['error']}"
+        else:
+            return f"✅ Professional SMS sent to {recipient}!\n\nOriginal: {original_message}\nEnhanced: {enhanced_message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
+    else:
+        # Regular message (not SMS)
+        enhanced_message = enhance_message_with_claude(message)
+        return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}"
+
+def handle_send_email(data):
+    """Handle sending email to a single recipient"""
+    recipient = data.get("recipient", "")
+    message = data.get("message", "")
+    subject = data.get("subject", "")
+    original_message = data.get("original_message", message)
+    
+    print(f"[CMP] Sending email to {recipient}")
+    
+    # Check if recipient is an email address
+    if is_email_address(recipient):
+        print(f"[CMP] Detected email address, processing email to {recipient}")
+        
+        # Enhance the message using Claude AI
+        print(f"[CMP] Original message: {original_message}")
+        enhanced_message = enhance_message_with_claude(original_message)
+        print(f"[CMP] Enhanced message: {enhanced_message}")
+        
+        # Generate subject if not provided
+        if not subject:
+            subject = generate_email_subject(enhanced_message)
+            print(f"[CMP] Generated subject: {subject}")
+        
+        # Send the enhanced email
+        result = email_client.send_email(recipient, subject, enhanced_message)
+        
+        if "error" in result:
+            return f"Failed to send email to {recipient}: {result['error']}"
+        else:
+            return f"✅ Professional email sent to {recipient}!\n\nSubject: {subject}\nOriginal: {original_message}\nEnhanced: {enhanced_message}\n\nSent at: {result.get('timestamp', 'N/A')}"
+    else:
+        # Not an email address
+        enhanced_message = enhance_message_with_claude(message)
+        return f"Enhanced message for {recipient}:\nOriginal: {message}\nEnhanced: {enhanced_message}\n\nNote: {recipient} is not a valid email address"
+
+def handle_send_message_multi(data: Dict[str, Any]) -> str:
+    """Handle sending messages to multiple recipients"""
+    
+    recipients = data.get("recipients", [])
+    message = data.get("message", "")
+    original_message = data.get("original_message", message)
+    
+    if not recipients:
+        return "❌ No recipients specified"
+    
+    if not message:
+        return "❌ No message specified"
+    
+    print(f"[CMP] Sending message to {len(recipients)} recipients: {recipients}")
+    
+    # Send to multiple recipients
+    result = send_sms_to_multiple(recipients, original_message, enhance=True)
+    
+    if result["success"]:
+        success_msg = f"✅ Message sent to {result['successful_sends']}/{result['total_recipients']} recipients!"
+        success_msg += f"\n\nOriginal: {result['original_message']}"
+        success_msg += f"\nEnhanced: {result['enhanced_message']}"
+        
+        if result["failed_sends"] > 0:
+            success_msg += f"\n\n⚠️ {result['failed_sends']} messages failed to send"
+            
+        # Add details for each recipient
+        success_msg += "\n\n📋 Delivery Details:"
+        for res in result["results"]:
+            status = "✅" if res.get("success") else "❌"
+            recipient = res.get("original_recipient", res.get("recipient", "Unknown"))
+            success_msg += f"\n{status} {recipient}"
+            if not res.get("success"):
+                success_msg += f" - {res.get('error', 'Unknown error')}"
+        
+        return success_msg
+    else:
+        return f"❌ Failed to send messages to all {result['total_recipients']} recipients"
+
+def handle_send_email_multi(data: Dict[str, Any]) -> str:
+    """Handle sending emails to multiple recipients"""
+    
+    recipients = data.get("recipients", [])
+    message = data.get("message", "")
+    subject = data.get("subject", "")
+    original_message = data.get("original_message", message)
+    
+    if not recipients:
+        return "❌ No recipients specified"
+    
+    if not message:
+        return "❌ No message specified"
+    
+    print(f"[CMP] Sending email to {len(recipients)} recipients: {recipients}")
+    
+    # Send emails to multiple recipients
+    result = send_emails_to_multiple(recipients, subject, original_message, enhance=True)
+    
+    if result["success"]:
+        success_msg = f"✅ Email sent to {result['successful_sends']}/{result['total_recipients']} recipients!"
+        success_msg += f"\n\nSubject: {result['subject']}"
+        success_msg += f"\nOriginal: {result['original_message']}"
+        success_msg += f"\nEnhanced: {result['enhanced_message']}"
+        
+        if result["failed_sends"] > 0:
+            success_msg += f"\n\n⚠️ {result['failed_sends']} emails failed to send"
+            
+        # Add details for each recipient
+        success_msg += "\n\n📋 Delivery Details:"
+        for res in result["results"]:
+            status = "✅" if res.get("success") else "❌"
+            recipient = res.get("original_recipient", res.get("recipient", "Unknown"))
+            success_msg += f"\n{status} {recipient}"
+            if not res.get("success"):
+                success_msg += f" - {res.get('error', 'Unknown error')}"
+        
+        return success_msg
+    else:
+        return f"❌ Failed to send emails to all {result['total_recipients']} recipients"
+
+def handle_log_conversation(data):
+    print("[CMP] Logging conversation:", data.get("notes"))
+    return "Conversation log saved."
+
+def dispatch_action(parsed):
+    """Enhanced dispatch function with email, multi-recipient, and service reminder support"""
+    action = parsed.get("action")
+    if action == "create_task":
+        return handle_create_task(parsed)
+    elif action == "create_appointment":
+        return handle_create_appointment(parsed)
+    elif action == "send_message":
+        return handle_send_message(parsed)
+    elif action == "send_message_multi":
+        return handle_send_message_multi(parsed)
+    elif action == "send_email":
+        return handle_send_email(parsed)
+    elif action == "send_email_multi":
+        return handle_send_email_multi(parsed)
+    elif action == "create_service_reminder":
+        return handle_create_service_reminder(parsed)
+    elif action == "update_service_reminder":
+        return handle_update_service_reminder(parsed)
+    elif action == "complete_service_reminder":
+        return handle_complete_service_reminder(parsed)
+    elif action == "log_conversation":
+        return handle_log_conversation(parsed)
+    else:
+        return f"Unknown action: {action}"
+
+print("✅ Action handlers defined", flush=True)
+
+# ----- PWA Manifest -----
+@app.route('/manifest.json')
+def manifest():
+    return jsonify({
+        "name": "Smart AI Agent with Wake Word",
+        "short_name": "AI Agent",
+        "description": "AI-powered task and appointment manager with wake word activation, professional voice SMS, Email & Service Reminders",
+        "start_url": "/",
+        "display": "standalone",
+        "background_color": "#f8f9fa",
+        "theme_color": "#007bff",
+        "icons": [
+            {
+                "src": "data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMTkyIiBoZWlnaHQ9IjE5MiIgdmlld0JveD0iMCAwIDE5MiAxOTIiIGZpbGw9Im5vbmUiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+CjxyZWN0IHdpZHRoPSIxOTIiIGhlaWdodD0iMTkyIiByeD0iMjQiIGZpbGw9IiMwMDdiZmYiLz4KPHN2ZyB4PSI0OCIgeT0iNDgiIHdpZHRoPSI5NiIgaGVpZ2h0PSI5NiIgdmlld0JveD0iMCAwIDI0IDI0IiBmaWxsPSJub25lIiBzdHJva2U9IndoaXRlIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+CjxwYXRoIGQ9Im0xMiAzLTEuOTEyIDUuODEzYTIgMiAwIDAgMS0xLjI5NSAxLjI5NUwzIDEyIDguODEzIDEzLjkxMmEyIDIgMCAwIDEgMS4yOTUgMS4yOTVMMTIgMjEgMTMuOTEyIDE1LjE4N2EyIDIgMCAwIDEgMS4yOTUtMS4yOTVMMjEgMTIgMTUuMTg3IDEwLjA4OGEyIDIgMCAwIDEtMS4yOTUtMS4yOTVMMTIgMyIvPgo8L3N2Zz4KPC9zdmc+",
+                "sizes": "192x192",
+                "type": "image/svg+xml",
+                "purpose": "any maskable"
+            }
+        ],
+        "categories": ["productivity", "utilities"],
+        "orientation": "portrait"
+    })
+
+# ----- Service Worker -----
+@app.route('/sw.js')
+def service_worker():
+    return '''
+const CACHE_NAME = 'ai-agent-v1';
+const urlsToCache = [
+  '/',
+  '/manifest.json'
+];
+
+self.addEventListener('install', event => {
+  event.waitUntil(
+    caches.open(CACHE_NAME)
+      .then(cache => cache.addAll(urlsToCache))
+  );
+});
+
+self.addEventListener('fetch', event => {
+  event.respondWith(
+    caches.match(event.request)
+      .then(response => {
+        if (response) {
+          return response;
+        }
+        return fetch(event.request);
+      })
+  );
+});
+''', {'Content-Type': 'application/javascript'}
+
+# ----- Enhanced Mobile HTML Template with Wake Word Support -----
+
     return bool(re.match(email_pattern, recipient.strip()))
 
 def format_phone_number(phone: str) -> str:
@@ -1180,6 +2149,8 @@ def format_phone_number(phone: str) -> str:
             clean = '+' + clean
     
     return clean
+
+print("✅ Utility functions defined (phone/email validation)", flush=True)
 
 def parse_recipients(recipients_text: str) -> List[str]:
     """Parse multiple recipients from text"""

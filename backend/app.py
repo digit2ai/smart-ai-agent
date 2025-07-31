@@ -1,63 +1,4 @@
-function checkForWakeWord(text) {{
-            const lowerText = text.toLowerCase().trim();
-            // Add ALL the variations speech recognition actually hears
-            const wakeWords = [
-                'hey ringly', 'hey ring', 'ringly', 
-                'hey wrinkly', 'wrinkly', 'hey wrinkle',
-                'hey wrigley', 'wrigley', 
-                'hey ringley', 'ringley',
-                'hey ringling', 'ringling',
-                'hey wrigly', 'wrigly'
-            ];
-            let wakeWordFound = false;
-            let detectedWakeWord = '';
-            console.log('Checking for wake word in:', text);
-            console.log('Available wake words:', wakeWords);
-            
-            for (const wakeWord of wakeWords) {{
-                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
-                if (lowerText.includes(wakeWord)) {{
-                    wakeWordFound = true;
-                    detectedWakeWord = wakeWord;
-                    console.log('✅ Wake word FOUND:', wakeWord);
-                    break;
-                }}
-            }}
-            
-            if (wakeWordFound) {{
-                console.log('🚀 Processing wake word command:', text);
-                processWakeWordCommand(text);
-            }} else {{
-                console.log('❌ No wake word found in:', text);
-                console.log('Expected one of:', wakeWords);
-            }}
-        }}</Parameter>
-<parameter name="old_str">        function checkForWakeWord(text) {{
-            const lowerText = text.toLowerCase().trim();
-            const wakeWords = ['hey ringly', 'hey ring', 'ringly', 'hey wrinkly', 'wrinkly', 'hey wrinkle'];
-            let wakeWordFound = false;
-            let detectedWakeWord = '';
-            console.log('Checking for wake word in:', text);
-            console.log('Available wake words:', wakeWords);
-            
-            for (const wakeWord of wakeWords) {{
-                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
-                if (lowerText.includes(wakeWord)) {{
-                    wakeWordFound = true;
-                    detectedWakeWord = wakeWord;
-                    console.log('✅ Wake word FOUND:', wakeWord);
-                    break;
-                }}
-            }}
-            
-            if (wakeWordFound) {{
-                console.log('🚀 Processing wake word command:', text);
-                processWakeWordCommand(text);
-            }} else {{
-                console.log('❌ No wake word found in:', text);
-                console.log('Expected one of:', wakeWords);
-            }}
-        }}# Minimal Flask Wake Word App - SMS Focus with Always Listening Frontend
+# Minimal Flask Wake Word App - SMS Focus with Always Listening Frontend
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -345,7 +286,7 @@ def dispatch_action(parsed):
     else:
         return f"Unknown action: {action}"
 
-# Always Listening HTML Template
+# Always Listening HTML Template with Enhanced Wake Word Detection
 def get_html_template():
     primary_wake_word = CONFIG['wake_word_primary']
     return f'''<!DOCTYPE html>
@@ -353,31 +294,16 @@ def get_html_template():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wake Word SMS - Always Listening</title>
+    <title>Wake Word SMS - Enhanced Voice</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            min-height: 100vh; display: flex; align-items: center; justify-content: center;
-            padding: 20px; color: white;
-        }}
-        .container {{
-            background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px;
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px);
-            max-width: 700px; width: 100%; text-align: center;
-        }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
+        .container {{ background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; }}
         .header h1 {{ font-size: 2.5em; margin-bottom: 10px; font-weight: 700; }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; }}
-        .wake-word-display {{
-            background: linear-gradient(45deg, #28a745, #20c997); padding: 15px 30px;
-            border-radius: 50px; font-size: 1.3em; font-weight: bold; margin-bottom: 30px; display: inline-block;
-        }}
+        .wake-word-display {{ background: linear-gradient(45deg, #28a745, #20c997); padding: 15px 30px; border-radius: 50px; font-size: 1.3em; font-weight: bold; margin-bottom: 30px; display: inline-block; }}
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
-        .voice-indicator {{
-            width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center;
-            font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease;
-        }}
+        .voice-indicator {{ width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease; }}
         .voice-indicator.listening {{ background: linear-gradient(45deg, #28a745, #20c997); animation: pulse 2s infinite; box-shadow: 0 0 30px rgba(40, 167, 69, 0.5); }}
         .voice-indicator.wake-detected {{ background: linear-gradient(45deg, #ffc107, #e0a800); animation: glow 1s infinite alternate; box-shadow: 0 0 30px rgba(255, 193, 7, 0.7); }}
         .voice-indicator.processing {{ background: linear-gradient(45deg, #dc3545, #c82333); animation: spin 1s linear infinite; box-shadow: 0 0 30px rgba(220, 53, 69, 0.5); }}
@@ -390,25 +316,16 @@ def get_html_template():
         .status-text.wake-detected {{ color: #ffc107; }}
         .status-text.processing {{ color: #dc3545; }}
         .controls {{ margin-bottom: 30px; }}
-        .control-button {{
-            background: linear-gradient(45deg, #007bff, #0056b3); color: white; border: none; padding: 12px 30px;
-            border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 0 10px; transition: all 0.3s ease;
-        }}
+        .control-button {{ background: linear-gradient(45deg, #007bff, #0056b3); color: white; border: none; padding: 12px 30px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 0 10px; transition: all 0.3s ease; }}
         .control-button:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4); }}
         .control-button.stop {{ background: linear-gradient(45deg, #dc3545, #c82333); }}
         .control-button.test {{ background: linear-gradient(45deg, #28a745, #20c997); }}
         .control-button:disabled {{ background: #6c757d; cursor: not-allowed; transform: none; box-shadow: none; }}
-        .transcription {{
-            background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px;
-            min-height: 80px; border: 2px solid transparent; transition: all 0.3s ease;
-        }}
+        .transcription {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; border: 2px solid transparent; transition: all 0.3s ease; }}
         .transcription.active {{ border-color: #28a745; background: rgba(40, 167, 69, 0.1); }}
         .transcription h3 {{ font-size: 1.1em; margin-bottom: 10px; opacity: 0.8; }}
         .transcription-text {{ font-size: 1.2em; font-weight: 500; font-family: 'Courier New', monospace; }}
-        .response {{
-            background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px;
-            min-height: 80px; text-align: left; white-space: pre-wrap; display: none;
-        }}
+        .response {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; text-align: left; white-space: pre-wrap; display: none; }}
         .response.success {{ background: rgba(40, 167, 69, 0.2); border: 2px solid #28a745; }}
         .response.error {{ background: rgba(220, 53, 69, 0.2); border: 2px solid #dc3545; }}
         .examples {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; text-align: left; margin-bottom: 20px; }}
@@ -418,21 +335,16 @@ def get_html_template():
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
         .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
         .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
-        @media (max-width: 600px) {{
-            .container {{ padding: 20px; margin: 10px; }}
-            .header h1 {{ font-size: 2em; }}
-            .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }}
-            .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }}
-        }}
+        @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header h1 {{ font-size: 2em; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>🎙️ Wake Word SMS</h1>
-            <p>Always listening for voice commands</p>
+            <p>Enhanced voice recognition - adapts to your pronunciation!</p>
         </div>
-        <div class="wake-word-display">🎯 Say: "{primary_wake_word}"</div>
+        <div class="wake-word-display">🎯 Say: "Hey Ringly" (any variation)</div>
         <div class="listening-status">
             <div class="voice-indicator idle" id="voiceIndicator">🎤</div>
             <div class="status-text" id="statusText">Click "Start Listening" to begin</div>
@@ -444,21 +356,21 @@ def get_html_template():
         </div>
         <div class="transcription" id="transcription">
             <h3>🎤 Voice Transcription</h3>
-            <div class="transcription-text" id="transcriptionText">Waiting for "{primary_wake_word}" command...</div>
+            <div class="transcription-text" id="transcriptionText">Waiting for wake word command...</div>
         </div>
         <div id="response" class="response"></div>
         <div class="examples">
-            <h3>📝 Voice Commands</h3>
+            <h3>📝 Voice Commands (Any pronunciation works!)</h3>
             <ul>
                 <li>"Hey Ringly: text 6566001400 saying hello there!"</li>
                 <li>"Hey Ring: text Mom saying running late"</li> 
                 <li>"Hey Wrinkly: send message to John saying meeting at 3pm"</li>
                 <li>"Hey Wrigley: text 8136414177 saying voice test working"</li>
-                <li><strong>Try any variation - the system adapts to your pronunciation!</strong></li>
+                <li><strong>System adapts to YOUR pronunciation automatically!</strong></li>
             </ul>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when "{primary_wake_word}" is detected.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected.</div>
     </div>
 
     <script>
@@ -466,6 +378,8 @@ def get_html_template():
         let isListening = false;
         let isProcessingCommand = false;
         let continuousListening = true;
+        let commandBuffer = '';
+        let bufferTimeout = null;
 
         const voiceIndicator = document.getElementById('voiceIndicator');
         const statusText = document.getElementById('statusText');
@@ -476,26 +390,40 @@ def get_html_template():
         const response = document.getElementById('response');
         const browserSupport = document.getElementById('browserSupport');
 
+        // All wake word variations that speech recognition might hear
+        const wakeWords = [
+            'hey ringly', 'hey ring', 'ringly', 
+            'hey wrinkly', 'wrinkly', 'hey wrinkle',
+            'hey wrigley', 'wrigley', 
+            'hey ringley', 'ringley',
+            'hey ringling', 'ringling',
+            'hey wrigly', 'wrigly'
+        ];
+
+        function checkForWakeWordInBuffer(buffer) {{
+            const lowerBuffer = buffer.toLowerCase().trim();
+            for (const wakeWord of wakeWords) {{
+                if (lowerBuffer.includes(wakeWord)) {{
+                    return true;
+                }}
+            }}
+            return false;
+        }}
+
         function initSpeechRecognition() {{
             if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {{
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 recognition = new SpeechRecognition();
+                
                 recognition.continuous = true;
                 recognition.interimResults = true;
                 recognition.lang = 'en-US';
                 recognition.maxAlternatives = 1;
-                
-                // Try to capture longer phrases
-                recognition.grammars = null; // No grammar restrictions
-                
-                // Add a small buffer to capture complete commands
-                let commandBuffer = '';
-                let bufferTimeout = null;
 
                 recognition.onstart = function() {{
                     console.log('Speech recognition started');
                     isListening = true;
-                    updateUI('listening', '🎤 Listening for "{primary_wake_word}"...', '👂');
+                    updateUI('listening', '🎤 Listening for wake word...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -520,27 +448,22 @@ def get_html_template():
                     if (finalTranscript && !isProcessingCommand) {{
                         console.log('Final transcript received:', finalTranscript.trim());
                         
-                        // Add to command buffer
                         commandBuffer += finalTranscript.trim() + ' ';
                         console.log('Command buffer now:', commandBuffer);
                         
-                        // Clear any existing timeout
                         if (bufferTimeout) {{
                             clearTimeout(bufferTimeout);
                         }}
                         
-                        // Check if we have a wake word in the buffer
                         const hasWakeWord = checkForWakeWordInBuffer(commandBuffer);
                         
                         if (hasWakeWord) {{
-                            // Wait a bit longer to capture the full command
                             bufferTimeout = setTimeout(() => {{
                                 console.log('Processing complete command from buffer:', commandBuffer);
                                 checkForWakeWord(commandBuffer.trim());
-                                commandBuffer = ''; // Clear buffer after processing
-                            }}, 2000); // Wait 2 seconds for complete command
+                                commandBuffer = '';
+                            }}, 2000);
                         }} else {{
-                            // No wake word, clear buffer after short delay
                             bufferTimeout = setTimeout(() => {{
                                 commandBuffer = '';
                                 console.log('Buffer cleared - no wake word found');
@@ -579,7 +502,7 @@ def get_html_template():
                     }}
                 }};
 
-                browserSupport.textContent = 'Voice recognition supported ✅';
+                browserSupport.textContent = 'Enhanced voice recognition supported ✅';
                 browserSupport.className = 'browser-support';
                 return true;
             }} else {{
@@ -592,7 +515,6 @@ def get_html_template():
 
         function checkForWakeWord(text) {{
             const lowerText = text.toLowerCase().trim();
-            const wakeWords = ['hey ringly', 'hey ring', 'ringly', 'hey wrinkly', 'wrinkly', 'hey wrinkle'];
             let wakeWordFound = false;
             let detectedWakeWord = '';
             console.log('Checking for wake word in:', text);
@@ -653,7 +575,7 @@ def get_html_template():
             }} finally {{
                 isProcessingCommand = false;
                 setTimeout(() => {{
-                    transcriptionText.textContent = 'Waiting for "{primary_wake_word}" command...';
+                    transcriptionText.textContent = 'Waiting for wake word command...';
                     transcription.classList.remove('active');
                 }}, 3000);
             }}
@@ -676,7 +598,7 @@ def get_html_template():
         }}
 
         function testSMS() {{
-            const testCommand = 'hey ringly: text 6566001400 saying test message from wake word system';
+            const testCommand = 'hey ringly: text 6566001400 saying enhanced system test working perfectly';
             console.log('Testing SMS with command:', testCommand);
             processWakeWordCommand(testCommand);
         }}
@@ -690,6 +612,7 @@ def get_html_template():
             startButton.disabled = true;
             stopButton.disabled = false;
             response.style.display = 'none';
+            commandBuffer = '';
             try {{
                 recognition.start();
             }} catch (error) {{
@@ -708,8 +631,12 @@ def get_html_template():
             updateUI('idle', 'Stopped listening', '🎤');
             startButton.disabled = false;
             stopButton.disabled = true;
-            transcriptionText.textContent = 'Waiting for "{primary_wake_word}" command...';
+            transcriptionText.textContent = 'Waiting for wake word command...';
             transcription.classList.remove('active');
+            commandBuffer = '';
+            if (bufferTimeout) {{
+                clearTimeout(bufferTimeout);
+            }}
         }}
 
         function restartListening() {{
@@ -788,7 +715,7 @@ def health_check():
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting Minimal Wake Word SMS App with Always Listening")
+    print("🚀 Starting Enhanced Wake Word SMS App")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")

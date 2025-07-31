@@ -297,7 +297,7 @@ def get_html_template():
     <title>Wake Word SMS - Enhanced Voice</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
         .container {{ background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; }}
         .header h1 {{ font-size: 2.5em; margin-bottom: 10px; font-weight: 700; }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; }}

@@ -24,7 +24,7 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    "wake_words": os.getenv("WAKE_WORDS", "hey ringly,ringly,hey ring,ring").split(","),
+    "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly".split(","),
     "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }
@@ -458,11 +458,29 @@ def get_html_template():
                         const hasWakeWord = checkForWakeWordInBuffer(commandBuffer);
                         
                         if (hasWakeWord) {{
+                            // Check if command looks incomplete (wait longer for complete commands)
+                            const commandLower = commandBuffer.toLowerCase().trim();
+                            const hasActionWord = commandLower.includes('text') || commandLower.includes('send') || commandLower.includes('message');
+                            const hasPhoneNumber = /\d{{3}}-?\d{{3}}-?\d{{4}}|\d{{10}}/.test(commandBuffer);
+                            const hasSaying = commandLower.includes('saying');
+                            
+                            let waitTime = 2000; // Default 2 seconds
+                            
+                            // If we have wake word + action but missing phone/message, wait longer
+                            if (hasActionWord && (!hasPhoneNumber || !hasSaying)) {{
+                                waitTime = 4000; // Wait 4 seconds for complete command
+                                console.log('Command looks incomplete, waiting longer for full command...');
+                                updateUI('wake-detected', '⏳ Capturing complete command...', '⏳');
+                            }} else {{
+                                console.log('Command looks complete, processing soon...');
+                                updateUI('wake-detected', '⚡ Complete command detected!', '⚡');
+                            }}
+                            
                             bufferTimeout = setTimeout(() => {{
                                 console.log('Processing complete command from buffer:', commandBuffer);
                                 checkForWakeWord(commandBuffer.trim());
                                 commandBuffer = '';
-                            }}, 2000);
+                            }}, waitTime);
                         }} else {{
                             bufferTimeout = setTimeout(() => {{
                                 commandBuffer = '';

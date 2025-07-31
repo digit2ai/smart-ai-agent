@@ -1,17 +1,308 @@
-<!DOCTYPE html>
+# Minimal Flask Wake Word App - SMS Focus with Always Listening Frontend
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import requests
+import json
+import os
+import re
+from datetime import datetime
+from typing import Dict, Any, List
+
+# Import Twilio REST API client
+try:
+    from twilio.rest import Client
+    TWILIO_AVAILABLE = True
+except ImportError:
+    TWILIO_AVAILABLE = False
+    print("Twilio library not installed. Run: pip install twilio")
+
+app = Flask(__name__)
+CORS(app)
+
+CONFIG = {
+    "claude_api_key": os.getenv("CLAUDE_API_KEY", ""),
+    "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
+    "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
+    "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
+    "wake_words": os.getenv("WAKE_WORDS", "hey ringly,ringly,hey ring,ring").split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
+    "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
+}
+
+print(f"🎙️ Wake words: {CONFIG['wake_words']}")
+print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
+
+class TwilioClient:
+    """Simple Twilio client for SMS"""
+    
+    def __init__(self):
+        self.account_sid = CONFIG["twilio_account_sid"]
+        self.auth_token = CONFIG["twilio_auth_token"]
+        self.from_number = CONFIG["twilio_phone_number"]
+        self.client = None
+        
+        if TWILIO_AVAILABLE and self.account_sid and self.auth_token:
+            try:
+                self.client = Client(self.account_sid, self.auth_token)
+                print("✅ Twilio client initialized")
+            except Exception as e:
+                print(f"❌ Twilio failed: {e}")
+        else:
+            print("⚠️ Twilio not configured")
+    
+    def send_sms(self, to: str, message: str) -> Dict[str, Any]:
+        """Send SMS via Twilio"""
+        if not self.client or not self.from_number:
+            return {"error": "Twilio not configured"}
+        
+        try:
+            message_response = self.client.messages.create(
+                body=message,
+                from_=self.from_number,
+                to=to
+            )
+            
+            return {
+                "success": True,
+                "message_sid": message_response.sid,
+                "status": message_response.status,
+                "to": to,
+                "from": self.from_number,
+                "body": message
+            }
+            
+        except Exception as e:
+            return {"error": f"Failed to send SMS: {str(e)}"}
+
+class WakeWordProcessor:
+    """Simple wake word detection"""
+    
+    def __init__(self):
+        self.wake_words = CONFIG["wake_words"]
+        self.primary_wake_word = CONFIG["wake_word_primary"]
+        self.enabled = CONFIG["wake_word_enabled"]
+        
+    def detect_wake_word(self, text: str) -> Dict[str, Any]:
+        """Detect wake word and extract command"""
+        original_text = text.strip()
+        
+        if not self.enabled:
+            return {
+                "has_wake_word": True,
+                "wake_word_detected": "disabled",
+                "command_text": original_text,
+                "original_text": original_text
+            }
+        
+        search_text = original_text.lower()
+        
+        for wake_word in self.wake_words:
+            compare_word = wake_word.lower()
+            
+            if search_text.startswith(compare_word):
+                next_char_index = len(compare_word)
+                if (next_char_index >= len(search_text) or 
+                    search_text[next_char_index] in [' ', ',', ':', ';', '!', '?', '.']):
+                    
+                    command_text = original_text[len(wake_word):].strip()
+                    command_text = re.sub(r'^[,:;!?.]\s*', '', command_text)
+                    
+                    return {
+                        "has_wake_word": True,
+                        "wake_word_detected": wake_word,
+                        "command_text": command_text,
+                        "original_text": original_text
+                    }
+        
+        return {
+            "has_wake_word": False,
+            "wake_word_detected": None,
+            "command_text": original_text,
+            "original_text": original_text
+        }
+    
+    def process_wake_word_command(self, text: str) -> Dict[str, Any]:
+        """Process text with wake word detection"""
+        wake_result = self.detect_wake_word(text)
+        
+        if not wake_result["has_wake_word"]:
+            return {
+                "success": False,
+                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word}: text John saying hello'"
+            }
+        
+        command_text = wake_result["command_text"]
+        
+        if not command_text.strip():
+            return {
+                "success": False,
+                "error": f"Please provide a command after '{wake_result['wake_word_detected']}'"
+            }
+        
+        # Try to extract SMS command
+        sms_command = extract_sms_command(command_text)
+        if sms_command:
+            sms_command["wake_word_info"] = wake_result
+            return sms_command
+        
+        # Fallback to Claude
+        try:
+            claude_result = call_claude(command_text)
+            if claude_result and "error" not in claude_result:
+                claude_result["wake_word_info"] = wake_result
+                return claude_result
+        except Exception as e:
+            print(f"Claude error: {e}")
+        
+        return {
+            "success": False,
+            "error": f"I didn't understand: '{command_text}'. Try: '{self.primary_wake_word}: text John saying hello'"
+        }
+
+# Initialize clients
+twilio_client = TwilioClient()
+wake_word_processor = WakeWordProcessor()
+
+def call_claude(prompt):
+    """Simple Claude API call"""
+    try:
+        headers = {
+            "x-api-key": CONFIG["claude_api_key"],
+            "anthropic-version": "2023-06-01",
+            "content-type": "application/json"
+        }
+        
+        instruction_prompt = """
+You are an intelligent assistant. Respond ONLY with valid JSON using one of the supported actions.
+
+Supported actions:
+- send_message (supports SMS via Twilio)
+
+Response structure:
+{
+  "action": "send_message",
+  "recipient": "phone number or name",
+  "message": "message text"
+}
+
+Only include fields relevant to the action.
+"""
+        
+        full_prompt = f"{instruction_prompt}\n\nUser: {prompt}"
+
+        body = {
+            "model": "claude-3-haiku-20240307",
+            "max_tokens": 500,
+            "temperature": 0.3,
+            "messages": [{"role": "user", "content": full_prompt}]
+        }
+
+        res = requests.post("https://api.anthropic.com/v1/messages", headers=headers, data=json.dumps(body))
+        response_json = res.json()
+        
+        if "content" in response_json:
+            raw_text = response_json["content"][0]["text"]
+            parsed = json.loads(raw_text)
+            return parsed
+        else:
+            return {"error": "Claude response missing content."}
+    except Exception as e:
+        return {"error": str(e)}
+
+def is_phone_number(recipient: str) -> bool:
+    """Check if recipient looks like a phone number"""
+    clean = recipient.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    
+    if clean.startswith("+") and clean[1:].isdigit():
+        return True
+    if clean.isdigit() and len(clean) >= 10:
+        return True
+    
+    return False
+
+def format_phone_number(phone: str) -> str:
+    """Format phone number to E.164 format"""
+    clean = ''.join(c for c in phone if c.isdigit() or c == '+')
+    
+    if not clean.startswith('+'):
+        if len(clean) == 10:
+            clean = '+1' + clean
+        elif len(clean) == 11 and clean.startswith('1'):
+            clean = '+' + clean
+    
+    return clean
+
+def extract_sms_command(text: str) -> Dict[str, Any]:
+    """Extract SMS command from text"""
+    patterns = [
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        r'text (.+?) saying (.+)',
+        r'message (.+?) saying (.+)',
+        r'send (.+?) the message (.+)',
+        r'tell (.+?) that (.+)',
+        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Clean up voice artifacts
+            message = message.replace(" period", ".").replace(" comma", ",")
+            
+            return {
+                "action": "send_message",
+                "recipient": recipient,
+                "message": message
+            }
+    
+    return None
+
+def handle_send_message(data):
+    """Handle SMS sending"""
+    recipient = data.get("recipient", "")
+    message = data.get("message", "")
+    
+    if is_phone_number(recipient):
+        formatted_phone = format_phone_number(recipient)
+        result = twilio_client.send_sms(formatted_phone, message)
+        
+        if result.get("success"):
+            return f"✅ SMS sent to {recipient}!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
+        else:
+            return f"❌ Failed to send SMS to {recipient}: {result.get('error')}"
+    else:
+        return f"❌ Invalid phone number: {recipient}"
+
+def dispatch_action(parsed):
+    """Simple action dispatcher"""
+    action = parsed.get("action")
+    if action == "send_message":
+        return handle_send_message(parsed)
+    else:
+        return f"Unknown action: {action}"
+
+# Always Listening HTML Template
+def get_html_template():
+    primary_wake_word = CONFIG['wake_word_primary']
+    return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Wake Word SMS - Always Listening</title>
     <style>
-        * {
+        * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-        }
+        }}
 
-        body {
+        body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             min-height: 100vh;
@@ -20,9 +311,9 @@
             justify-content: center;
             padding: 20px;
             color: white;
-        }
+        }}
 
-        .container {
+        .container {{
             background: rgba(255, 255, 255, 0.1);
             border-radius: 20px;
             padding: 40px;
@@ -31,21 +322,21 @@
             max-width: 700px;
             width: 100%;
             text-align: center;
-        }
+        }}
 
-        .header h1 {
+        .header h1 {{
             font-size: 2.5em;
             margin-bottom: 10px;
             font-weight: 700;
-        }
+        }}
 
-        .header p {
+        .header p {{
             font-size: 1.2em;
             opacity: 0.9;
             margin-bottom: 30px;
-        }
+        }}
 
-        .wake-word-display {
+        .wake-word-display {{
             background: linear-gradient(45deg, #28a745, #20c997);
             padding: 15px 30px;
             border-radius: 50px;
@@ -53,18 +344,18 @@
             font-weight: bold;
             margin-bottom: 30px;
             display: inline-block;
-        }
+        }}
 
-        .listening-status {
+        .listening-status {{
             height: 120px;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
             margin-bottom: 30px;
-        }
+        }}
 
-        .voice-indicator {
+        .voice-indicator {{
             width: 100px;
             height: 100px;
             border-radius: 50%;
@@ -74,70 +365,70 @@
             font-size: 40px;
             margin-bottom: 15px;
             transition: all 0.3s ease;
-        }
+        }}
 
-        .voice-indicator.listening {
+        .voice-indicator.listening {{
             background: linear-gradient(45deg, #28a745, #20c997);
             animation: pulse 2s infinite;
             box-shadow: 0 0 30px rgba(40, 167, 69, 0.5);
-        }
+        }}
 
-        .voice-indicator.wake-detected {
+        .voice-indicator.wake-detected {{
             background: linear-gradient(45deg, #ffc107, #e0a800);
             animation: glow 1s infinite alternate;
             box-shadow: 0 0 30px rgba(255, 193, 7, 0.7);
-        }
+        }}
 
-        .voice-indicator.processing {
+        .voice-indicator.processing {{
             background: linear-gradient(45deg, #dc3545, #c82333);
             animation: spin 1s linear infinite;
             box-shadow: 0 0 30px rgba(220, 53, 69, 0.5);
-        }
+        }}
 
-        .voice-indicator.idle {
+        .voice-indicator.idle {{
             background: rgba(255, 255, 255, 0.2);
             animation: none;
-        }
+        }}
 
-        @keyframes pulse {
-            0% { transform: scale(1); opacity: 1; }
-            50% { transform: scale(1.1); opacity: 0.8; }
-            100% { transform: scale(1); opacity: 1; }
-        }
+        @keyframes pulse {{
+            0% {{ transform: scale(1); opacity: 1; }}
+            50% {{ transform: scale(1.1); opacity: 0.8; }}
+            100% {{ transform: scale(1); opacity: 1; }}
+        }}
 
-        @keyframes glow {
-            0% { box-shadow: 0 0 30px rgba(255, 193, 7, 0.7); }
-            100% { box-shadow: 0 0 50px rgba(255, 193, 7, 1); }
-        }
+        @keyframes glow {{
+            0% {{ box-shadow: 0 0 30px rgba(255, 193, 7, 0.7); }}
+            100% {{ box-shadow: 0 0 50px rgba(255, 193, 7, 1); }}
+        }}
 
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
+        @keyframes spin {{
+            0% {{ transform: rotate(0deg); }}
+            100% {{ transform: rotate(360deg); }}
+        }}
 
-        .status-text {
+        .status-text {{
             font-size: 1.1em;
             font-weight: 500;
             min-height: 30px;
-        }
+        }}
 
-        .status-text.listening {
+        .status-text.listening {{
             color: #20c997;
-        }
+        }}
 
-        .status-text.wake-detected {
+        .status-text.wake-detected {{
             color: #ffc107;
-        }
+        }}
 
-        .status-text.processing {
+        .status-text.processing {{
             color: #dc3545;
-        }
+        }}
 
-        .controls {
+        .controls {{
             margin-bottom: 30px;
-        }
+        }}
 
-        .control-button {
+        .control-button {{
             background: linear-gradient(45deg, #007bff, #0056b3);
             color: white;
             border: none;
@@ -148,25 +439,25 @@
             cursor: pointer;
             margin: 0 10px;
             transition: all 0.3s ease;
-        }
+        }}
 
-        .control-button:hover {
+        .control-button:hover {{
             transform: translateY(-2px);
             box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4);
-        }
+        }}
 
-        .control-button.stop {
+        .control-button.stop {{
             background: linear-gradient(45deg, #dc3545, #c82333);
-        }
+        }}
 
-        .control-button:disabled {
+        .control-button:disabled {{
             background: #6c757d;
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
-        }
+        }}
 
-        .transcription {
+        .transcription {{
             background: rgba(255, 255, 255, 0.1);
             border-radius: 15px;
             padding: 20px;
@@ -174,26 +465,26 @@
             min-height: 80px;
             border: 2px solid transparent;
             transition: all 0.3s ease;
-        }
+        }}
 
-        .transcription.active {
+        .transcription.active {{
             border-color: #28a745;
             background: rgba(40, 167, 69, 0.1);
-        }
+        }}
 
-        .transcription h3 {
+        .transcription h3 {{
             font-size: 1.1em;
             margin-bottom: 10px;
             opacity: 0.8;
-        }
+        }}
 
-        .transcription-text {
+        .transcription-text {{
             font-size: 1.2em;
             font-weight: 500;
             font-family: 'Courier New', monospace;
-        }
+        }}
 
-        .response {
+        .response {{
             background: rgba(255, 255, 255, 0.1);
             border-radius: 15px;
             padding: 20px;
@@ -202,88 +493,88 @@
             text-align: left;
             white-space: pre-wrap;
             display: none;
-        }
+        }}
 
-        .response.success {
+        .response.success {{
             background: rgba(40, 167, 69, 0.2);
             border: 2px solid #28a745;
-        }
+        }}
 
-        .response.error {
+        .response.error {{
             background: rgba(220, 53, 69, 0.2);
             border: 2px solid #dc3545;
-        }
+        }}
 
-        .examples {
+        .examples {{
             background: rgba(255, 255, 255, 0.1);
             border-radius: 15px;
             padding: 20px;
             text-align: left;
             margin-bottom: 20px;
-        }
+        }}
 
-        .examples h3 {
+        .examples h3 {{
             margin-bottom: 15px;
             text-align: center;
-        }
+        }}
 
-        .examples ul {
+        .examples ul {{
             list-style: none;
             padding: 0;
-        }
+        }}
 
-        .examples li {
+        .examples li {{
             background: rgba(255, 255, 255, 0.1);
             margin-bottom: 8px;
             padding: 12px 15px;
             border-radius: 8px;
             font-family: 'Courier New', monospace;
             font-size: 0.95em;
-        }
+        }}
 
-        .browser-support {
+        .browser-support {{
             font-size: 0.9em;
             opacity: 0.8;
             margin-top: 20px;
-        }
+        }}
 
-        .browser-support.unsupported {
+        .browser-support.unsupported {{
             color: #dc3545;
             font-weight: bold;
             opacity: 1;
-        }
+        }}
 
-        .privacy-note {
+        .privacy-note {{
             background: rgba(255, 193, 7, 0.2);
             border: 1px solid #ffc107;
             border-radius: 10px;
             padding: 15px;
             margin-top: 20px;
             font-size: 0.9em;
-        }
+        }}
 
-        @media (max-width: 600px) {
-            .container {
+        @media (max-width: 600px) {{
+            .container {{
                 padding: 20px;
                 margin: 10px;
-            }
+            }}
 
-            .header h1 {
+            .header h1 {{
                 font-size: 2em;
-            }
+            }}
 
-            .voice-indicator {
+            .voice-indicator {{
                 width: 80px;
                 height: 80px;
                 font-size: 32px;
-            }
+            }}
 
-            .control-button {
+            .control-button {{
                 padding: 10px 20px;
                 font-size: 0.9em;
                 margin: 5px;
-            }
-        }
+            }}
+        }}
     </style>
 </head>
 <body>
@@ -294,7 +585,7 @@
         </div>
 
         <div class="wake-word-display">
-            🎯 Say: "Hey Ringly"
+            🎯 Say: "{primary_wake_word}"
         </div>
 
         <div class="listening-status">
@@ -314,7 +605,7 @@
         <div class="transcription" id="transcription">
             <h3>🎤 Voice Transcription</h3>
             <div class="transcription-text" id="transcriptionText">
-                Waiting for "Hey Ringly" command...
+                Waiting for "{primary_wake_word}" command...
             </div>
         </div>
 
@@ -323,10 +614,10 @@
         <div class="examples">
             <h3>📝 Voice Commands</h3>
             <ul>
-                <li>"Hey Ringly: text 5551234567 saying hello there!"</li>
-                <li>"Hey Ringly: text Mom saying running late"</li>
-                <li>"Hey Ringly: send message to John saying meeting at 3pm"</li>
-                <li>"Hey Ringly: text 8136414177 saying voice test working"</li>
+                <li>"{primary_wake_word}: text 5551234567 saying hello there!"</li>
+                <li>"{primary_wake_word}: text Mom saying running late"</li>
+                <li>"{primary_wake_word}: send message to John saying meeting at 3pm"</li>
+                <li>"{primary_wake_word}: text 8136414177 saying voice test working"</li>
             </ul>
         </div>
 
@@ -336,7 +627,7 @@
 
         <div class="privacy-note">
             🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. 
-            Audio is only processed when "Hey Ringly" is detected.
+            Audio is only processed when "{primary_wake_word}" is detected.
         </div>
     </div>
 
@@ -358,293 +649,307 @@
         const browserSupport = document.getElementById('browserSupport');
 
         // Initialize speech recognition
-        function initSpeechRecognition() {
-            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {
+        function initSpeechRecognition() {{
+            if ('webkitSpeechRecognition' in window || 'SpeechRecognition' in window) {{
                 const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
                 recognition = new SpeechRecognition();
                 
-                // Configuration for continuous listening
-                recognition.continuous = true;  // Keep listening
-                recognition.interimResults = true;  // Show interim results
+                recognition.continuous = true;
+                recognition.interimResults = true;
                 recognition.lang = 'en-US';
                 recognition.maxAlternatives = 1;
 
-                // Event handlers
-                recognition.onstart = function() {
+                recognition.onstart = function() {{
                     console.log('Speech recognition started');
                     isListening = true;
-                    updateUI('listening', '🎤 Listening for "Hey Ringly"...', '👂');
-                };
+                    updateUI('listening', '🎤 Listening for "{primary_wake_word}"...', '👂');
+                }};
 
-                recognition.onresult = function(event) {
+                recognition.onresult = function(event) {{
                     let interimTranscript = '';
                     let finalTranscript = '';
 
-                    // Process all results
-                    for (let i = event.resultIndex; i < event.results.length; i++) {
+                    for (let i = event.resultIndex; i < event.results.length; i++) {{
                         const transcript = event.results[i][0].transcript;
-                        if (event.results[i].isFinal) {
+                        if (event.results[i].isFinal) {{
                             finalTranscript += transcript + ' ';
-                        } else {
+                        }} else {{
                             interimTranscript += transcript;
-                        }
-                    }
+                        }}
+                    }}
 
-                    // Show current transcription
                     const currentText = (finalTranscript + interimTranscript).trim();
-                    if (currentText) {
+                    if (currentText) {{
                         transcriptionText.textContent = currentText;
                         transcription.classList.add('active');
-                    }
+                    }}
 
-                    // Check for wake word in final transcript
-                    if (finalTranscript && !isProcessingCommand) {
+                    if (finalTranscript && !isProcessingCommand) {{
                         checkForWakeWord(finalTranscript.trim());
-                    }
-                };
+                    }}
+                }};
 
-                recognition.onerror = function(event) {
+                recognition.onerror = function(event) {{
                     console.error('Speech recognition error:', event.error);
                     
+                    if (event.error === 'no-speech') {{
+                        return;
+                    }}
+                    
                     let errorMessage = 'Recognition error: ';
-                    switch(event.error) {
-                        case 'no-speech':
-                            // This is normal for continuous listening, don't show error
-                            return;
+                    switch(event.error) {{
                         case 'network':
                             errorMessage += 'Network error. Check connection.';
                             break;
                         case 'not-allowed':
-                            errorMessage += 'Microphone access denied. Please allow microphone access.';
-                            stopListening();
-                            break;
-                        case 'service-not-allowed':
-                            errorMessage += 'Speech service not allowed.';
+                            errorMessage += 'Microphone access denied.';
                             stopListening();
                             break;
                         default:
                             errorMessage += event.error;
-                    }
+                    }}
                     
                     updateUI('idle', errorMessage, '❌');
-                    setTimeout(() => {
-                        if (continuousListening && !isListening) {
+                    setTimeout(() => {{
+                        if (continuousListening && !isListening) {{
                             restartListening();
-                        }
-                    }, 2000);
-                };
+                        }}
+                    }}, 2000);
+                }};
 
-                recognition.onend = function() {
+                recognition.onend = function() {{
                     console.log('Speech recognition ended');
                     isListening = false;
                     
-                    if (continuousListening && !isProcessingCommand) {
-                        // Automatically restart listening
-                        setTimeout(() => {
-                            if (continuousListening) {
+                    if (continuousListening && !isProcessingCommand) {{
+                        setTimeout(() => {{
+                            if (continuousListening) {{
                                 restartListening();
-                            }
-                        }, 100);
-                    } else {
+                            }}
+                        }}, 100);
+                    }} else {{
                         updateUI('idle', 'Stopped listening', '🎤');
                         startButton.disabled = false;
                         stopButton.disabled = true;
-                    }
-                };
+                    }}
+                }};
 
                 browserSupport.textContent = 'Voice recognition supported ✅';
                 browserSupport.className = 'browser-support';
                 return true;
-            } else {
-                browserSupport.textContent = '❌ Voice recognition not supported in this browser. Please use Chrome, Edge, or Safari.';
+            }} else {{
+                browserSupport.textContent = '❌ Voice recognition not supported in this browser.';
                 browserSupport.className = 'browser-support unsupported';
                 startButton.disabled = true;
                 return false;
-            }
-        }
+            }}
+        }}
 
-        // Check for wake word
-        function checkForWakeWord(text) {
+        function checkForWakeWord(text) {{
             const lowerText = text.toLowerCase().trim();
-            
-            // Look for "hey ringly" or similar wake words
             const wakeWords = ['hey ringly', 'hey ring', 'ringly'];
             let wakeWordFound = false;
-            let detectedWakeWord = '';
 
-            for (const wakeWord of wakeWords) {
-                if (lowerText.includes(wakeWord)) {
+            for (const wakeWord of wakeWords) {{
+                if (lowerText.includes(wakeWord)) {{
                     wakeWordFound = true;
-                    detectedWakeWord = wakeWord;
                     break;
-                }
-            }
+                }}
+            }}
 
-            if (wakeWordFound) {
-                console.log('Wake word detected:', detectedWakeWord);
+            if (wakeWordFound) {{
                 processWakeWordCommand(text);
-            }
-        }
+            }}
+        }}
 
-        // Process wake word command
-        async function processWakeWordCommand(fullText) {
-            if (isProcessingCommand) return; // Prevent double processing
+        async function processWakeWordCommand(fullText) {{
+            if (isProcessingCommand) return;
             
             isProcessingCommand = true;
             updateUI('wake-detected', '⚡ Wake word detected! Processing...', '⚡');
-            
-            // Show the full command
             transcriptionText.textContent = fullText;
             
-            try {
-                // Send to your backend
+            try {{
                 updateUI('processing', '📤 Sending command...', '⚙️');
                 
-                const apiResponse = await fetch('/execute', {
+                const apiResponse = await fetch('/execute', {{
                     method: 'POST',
-                    headers: {
+                    headers: {{
                         'Content-Type': 'application/json',
-                    },
-                    body: JSON.stringify({ 
-                        text: fullText  // Changed from 'command' to 'text' to match your backend
-                    })
-                });
+                    }},
+                    body: JSON.stringify({{ text: fullText }})
+                }});
 
                 const data = await apiResponse.json();
                 
-                if (apiResponse.ok) {
+                if (apiResponse.ok) {{
                     showResponse(data.response || 'Command executed successfully!', 'success');
                     updateUI('listening', '✅ Command sent! Listening for next command...', '👂');
-                } else {
+                }} else {{
                     showResponse(data.error || 'An error occurred while processing your command.', 'error');
                     updateUI('listening', '❌ Error occurred. Listening for next command...', '👂');
-                }
-            } catch (error) {
+                }}
+            }} catch (error) {{
                 console.error('Error sending command:', error);
                 showResponse('Network error. Please check your connection and try again.', 'error');
                 updateUI('listening', '❌ Network error. Listening for next command...', '👂');
-            } finally {
+            }} finally {{
                 isProcessingCommand = false;
-                
-                // Clear transcription after a delay
-                setTimeout(() => {
-                    transcriptionText.textContent = 'Waiting for "Hey Ringly" command...';
+                setTimeout(() => {{
+                    transcriptionText.textContent = 'Waiting for "{primary_wake_word}" command...';
                     transcription.classList.remove('active');
-                }, 3000);
-            }
-        }
+                }}, 3000);
+            }}
+        }}
 
-        // Update UI elements
-        function updateUI(state, statusMessage, indicator) {
-            // Update status text
+        function updateUI(state, statusMessage, indicator) {{
             statusText.textContent = statusMessage;
-            statusText.className = `status-text ${state}`;
-            
-            // Update voice indicator
+            statusText.className = `status-text ${{state}}`;
             voiceIndicator.textContent = indicator;
-            voiceIndicator.className = `voice-indicator ${state}`;
-        }
+            voiceIndicator.className = `voice-indicator ${{state}}`;
+        }}
 
-        // Show response
-        function showResponse(message, type) {
+        function showResponse(message, type) {{
             response.textContent = message;
-            response.className = `response ${type}`;
+            response.className = `response ${{type}}`;
             response.style.display = 'block';
             
-            // Auto-hide success messages after 10 seconds
-            if (type === 'success') {
-                setTimeout(() => {
+            if (type === 'success') {{
+                setTimeout(() => {{
                     response.style.display = 'none';
-                }, 10000);
-            }
-        }
+                }}, 10000);
+            }}
+        }}
 
-        // Start listening
-        function startListening() {
-            if (!recognition) {
+        function startListening() {{
+            if (!recognition) {{
                 alert('Speech recognition not available in this browser.');
                 return;
-            }
+            }}
 
             continuousListening = true;
             startButton.disabled = true;
             stopButton.disabled = false;
             response.style.display = 'none';
             
-            try {
+            try {{
                 recognition.start();
-            } catch (error) {
+            }} catch (error) {{
                 console.error('Error starting recognition:', error);
                 updateUI('idle', 'Error starting recognition', '❌');
                 startButton.disabled = false;
                 stopButton.disabled = true;
-            }
-        }
+            }}
+        }}
 
-        // Stop listening
-        function stopListening() {
+        function stopListening() {{
             continuousListening = false;
-            if (recognition && isListening) {
+            if (recognition && isListening) {{
                 recognition.stop();
-            }
+            }}
             updateUI('idle', 'Stopped listening', '🎤');
             startButton.disabled = false;
             stopButton.disabled = true;
-            transcriptionText.textContent = 'Waiting for "Hey Ringly" command...';
+            transcriptionText.textContent = 'Waiting for "{primary_wake_word}" command...';
             transcription.classList.remove('active');
-        }
+        }}
 
-        // Restart listening (for continuous mode)
-        function restartListening() {
-            if (continuousListening && recognition && !isListening) {
-                try {
+        function restartListening() {{
+            if (continuousListening && recognition && !isListening) {{
+                try {{
                     recognition.start();
-                } catch (error) {
+                }} catch (error) {{
                     console.error('Error restarting recognition:', error);
-                    setTimeout(() => {
-                        if (continuousListening) {
+                    setTimeout(() => {{
+                        if (continuousListening) {{
                             restartListening();
-                        }
-                    }, 1000);
-                }
-            }
-        }
+                        }}
+                    }}, 1000);
+                }}
+            }}
+        }}
 
-        // Initialize on page load
-        window.addEventListener('load', function() {
-            const speechSupported = initSpeechRecognition();
-            if (speechSupported) {
-                console.log('Speech recognition initialized successfully');
-            } else {
-                console.log('Speech recognition not supported');
-            }
-        });
+        window.addEventListener('load', function() {{
+            initSpeechRecognition();
+        }});
 
-        // Handle visibility change (pause when tab not active)
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden && isListening) {
-                console.log('Tab hidden, pausing recognition');
+        document.addEventListener('visibilitychange', function() {{
+            if (document.hidden && isListening) {{
                 recognition.stop();
-            } else if (!document.hidden && continuousListening && !isListening) {
-                console.log('Tab visible, resuming recognition');
-                setTimeout(() => {
+            }} else if (!document.hidden && continuousListening && !isListening) {{
+                setTimeout(() => {{
                     restartListening();
-                }, 500);
-            }
-        });
+                }}, 500);
+            }}
+        }});
 
-        // Request microphone permission on first interaction
-        document.addEventListener('click', function() {
-            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-                navigator.mediaDevices.getUserMedia({ audio: true })
-                    .then(() => {
+        document.addEventListener('click', function() {{
+            if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {{
+                navigator.mediaDevices.getUserMedia({{ audio: true }})
+                    .then(() => {{
                         console.log('Microphone permission granted');
-                    })
-                    .catch((error) => {
+                    }})
+                    .catch((error) => {{
                         console.warn('Microphone permission denied:', error);
-                    });
-            }
-        }, { once: true });
+                    }});
+            }}
+        }}, {{ once: true }});
     </script>
 </body>
-</html>
+</html>'''
+
+# Routes
+@app.route("/")
+def root():
+    return get_html_template()
+
+@app.route('/execute', methods=['POST'])
+def execute():
+    try:
+        data = request.json
+        prompt = data.get("text", "")
+        
+        # Process with wake word
+        wake_result = wake_word_processor.process_wake_word_command(prompt)
+        
+        if not wake_result.get("success", True):
+            return jsonify({
+                "response": wake_result.get("error", "Wake word validation failed"),
+                "claude_output": wake_result
+            })
+        
+        if wake_result.get("action"):
+            dispatch_result = dispatch_action(wake_result)
+            return jsonify({
+                "response": dispatch_result,
+                "claude_output": wake_result
+            })
+        
+        return jsonify({
+            "response": "No valid command found",
+            "claude_output": wake_result
+        })
+
+    except Exception as e:
+        return jsonify({"response": f"Error: {str(e)}"}), 500
+
+@app.route('/health', methods=['GET'])
+def health_check():
+    return jsonify({
+        "status": "healthy",
+        "wake_word_enabled": CONFIG["wake_word_enabled"],
+        "wake_word_primary": CONFIG["wake_word_primary"],
+        "twilio_configured": bool(twilio_client.client),
+        "claude_configured": bool(CONFIG["claude_api_key"])
+    })
+
+if __name__ == '__main__':
+    print("🚀 Starting Minimal Wake Word SMS App with Always Listening")
+    print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
+    print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
+    print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
+    
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Starting on port {port}")
+    
+    app.run(host="0.0.0.0", port=port, debug=False)

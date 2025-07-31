@@ -301,7 +301,7 @@ def get_html_template():
         .container {{ background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; }}
         .header h1 {{ font-size: 2.5em; margin-bottom: 10px; font-weight: 700; }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; }}
-        .wake-word-display {{ background: linear-gradient(45deg, #3a3a3a, #1f1f1f); padding: 15px 30px; border-radius: 50px; font-size: 1.3em; font-weight: bold; margin-bottom: 30px; display: inline-block; }}
+
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
         .voice-indicator {{ width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease; }}
         .voice-indicator.listening {{ background: linear-gradient(45deg, #28a745, #20c997); animation: pulse 2s infinite; box-shadow: 0 0 30px rgba(40, 167, 69, 0.5); }}
@@ -336,10 +336,7 @@ def get_html_template():
         .response {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; text-align: left; white-space: pre-wrap; display: none; }}
         .response.success {{ background: rgba(40, 167, 69, 0.2); border: 2px solid #28a745; }}
         .response.error {{ background: rgba(220, 53, 69, 0.2); border: 2px solid #dc3545; }}
-        .examples {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; text-align: left; margin-bottom: 20px; }}
-        .examples h3 {{ margin-bottom: 15px; text-align: center; }}
-        .examples ul {{ list-style: none; padding: 0; }}
-        .examples li {{ background: rgba(255, 255, 255, 0.1); margin-bottom: 8px; padding: 12px 15px; border-radius: 8px; font-family: 'Courier New', monospace; font-size: 0.95em; }}
+
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
         .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
         .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
@@ -352,7 +349,7 @@ def get_html_template():
             <h1>🎙️ Wake Word SMS</h1>
             <p>Enhanced voice recognition - adapts to your pronunciation!</p>
         </div>
-        <div class="wake-word-display">🎯 Say: "Hey Ringly" (any variation)</div>
+
         <div class="listening-status">
             <div class="voice-indicator idle" id="voiceIndicator">🎤</div>
             <div class="status-text" id="statusText">Click "Start Listening" to begin</div>
@@ -370,20 +367,12 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Ringly text 6566001400 saying hello from text input"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='MUST start with "Hey Ringly" - Try: "Hey Ringly text 6566001400 saying hello"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Both voice and text commands require "Hey Ringly" wake word</small>
         </div>
-        <div class="examples">
-            <h3>📝 Voice Commands (Any pronunciation works!)</h3>
-            <ul>
-                <li>"Hey Ringly: text 6566001400 saying hello there!"</li>
-                <li>"Hey Ring: text Mom saying running late"</li> 
-                <li>"Hey Wrinkly: send message to John saying meeting at 3pm"</li>
-                <li>"Hey Wrigley: text 8136414177 saying voice test working"</li>
-                <li><strong>System adapts to YOUR pronunciation automatically!</strong></li>
-            </ul>
-        </div>
+
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
         <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected.</div>
     </div>
@@ -479,12 +468,15 @@ def get_html_template():
                             const hasPhoneNumber = /\d{{3}}-?\d{{3}}-?\d{{4}}|\d{{10}}/.test(commandBuffer);
                             const hasSaying = commandLower.includes('saying');
                             
+                            // Check if it's just a wake word with no meaningful content
+                            const justWakeWord = wakeWords.some(wake => commandLower.trim() === wake.toLowerCase());
+                            
                             let waitTime = 2000; // Default 2 seconds
                             
-                            // If we have wake word + action but missing phone/message, wait longer
-                            if (hasActionWord && (!hasPhoneNumber || !hasSaying)) {{
-                                waitTime = 4000; // Wait 4 seconds for complete command
-                                console.log('Command looks incomplete, waiting longer for full command...');
+                            // If it's just a wake word OR missing essential parts, wait much longer
+                            if (justWakeWord || !hasActionWord || (!hasPhoneNumber || !hasSaying)) {{
+                                waitTime = 5000; // Wait 5 seconds for complete command
+                                console.log('Command incomplete - waiting longer for full command...');
                                 updateUI('wake-detected', '⏳ Capturing complete command...', '⏳');
                             }} else {{
                                 console.log('Command looks complete, processing soon...');
@@ -638,16 +630,29 @@ def get_html_template():
 
         function sendManualCommand() {{
             const manualInput = document.getElementById('manualCommand');
-            const command = manualInput.value.trim();
+            let command = manualInput.value.trim();
             
             if (!command) {{
                 alert('Please enter a command');
                 return;
             }}
             
+            // Auto-add wake word if missing
+            const lowerCommand = command.toLowerCase();
+            const hasWakeWord = wakeWords.some(wakeWord => lowerCommand.startsWith(wakeWord.toLowerCase()));
+            
+            if (!hasWakeWord) {{
+                command = 'Hey Ringly ' + command;
+                console.log('Auto-added wake word. Final command:', command);
+                // Update the input to show what was actually sent
+                manualInput.value = command;
+                setTimeout(() => {{ manualInput.value = ''; }}, 2000); // Clear after 2 seconds
+            }} else {{
+                manualInput.value = ''; // Clear input after sending
+            }}
+            
             console.log('Sending manual command:', command);
             processWakeWordCommand(command);
-            manualInput.value = ''; // Clear input after sending
         }}
 
         // Allow Enter key to send manual command

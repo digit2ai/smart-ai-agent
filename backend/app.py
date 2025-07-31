@@ -497,23 +497,28 @@ def get_html_template():
 
         function checkForWakeWord(text) {{
             const lowerText = text.toLowerCase().trim();
-            const wakeWords = ['hey ringly', 'hey ring', 'ringly'];
+            const wakeWords = ['hey ringly', 'hey ring', 'ringly', 'hey wrinkly', 'wrinkly', 'hey wrinkle'];
             let wakeWordFound = false;
             let detectedWakeWord = '';
             console.log('Checking for wake word in:', text);
+            console.log('Available wake words:', wakeWords);
+            
             for (const wakeWord of wakeWords) {{
+                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
                 if (lowerText.includes(wakeWord)) {{
                     wakeWordFound = true;
                     detectedWakeWord = wakeWord;
-                    console.log('Wake word detected:', wakeWord);
+                    console.log('✅ Wake word FOUND:', wakeWord);
                     break;
                 }}
             }}
+            
             if (wakeWordFound) {{
-                console.log('Processing wake word command:', text);
+                console.log('🚀 Processing wake word command:', text);
                 processWakeWordCommand(text);
             }} else {{
-                console.log('No wake word found in:', text);
+                console.log('❌ No wake word found in:', text);
+                console.log('Expected one of:', wakeWords);
             }}
         }}
 

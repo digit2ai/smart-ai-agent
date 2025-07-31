@@ -24,7 +24,7 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly".split(","),
+    "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly,cimanka, seemahnkah".split(","),
     "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }

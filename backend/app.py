@@ -311,19 +311,55 @@ def format_phone_number(phone: str) -> str:
 
 def fix_email_addresses(text: str) -> str:
     """Fix email addresses that get split by speech recognition"""
-    # Common patterns where speech recognition splits emails
-    patterns = [
-        r'\b(\w+)\s+(@gmail\.com)\b',
-        r'\b(\w+)\s+(@yahoo\.com)\b', 
-        r'\b(\w+)\s+(@hotmail\.com)\b',
-        r'\b(\w+)\s+(@outlook\.com)\b',
-        r'\b(\w+)\s+(@icloud\.com)\b',
-        r'\b(\w+)\s+(@\w+\.com)\b',  # Generic pattern
+    fixed_text = text
+    
+    # Most aggressive fix first: any words before @domain.com
+    # This handles "Manuel stagg@gmail.com" -> "Manuelstagg@gmail.com"
+    aggressive_patterns = [
+        r'\b(\w+)\s+(\w+)@(gmail|yahoo|hotmail|outlook|icloud|aol)\.com\b',
+        r'\b(\w+)\s+(\w+)\s+(\w+)@(gmail|yahoo|hotmail|outlook|icloud|aol)\.com\b',  # 3 words
+        r'\b(\w+)\s+(\w+)@(\w+)\.com\b',  # Generic .com domains
     ]
     
-    fixed_text = text
-    for pattern in patterns:
-        fixed_text = re.sub(pattern, r'\1\2', fixed_text, flags=re.IGNORECASE)
+    # Apply aggressive fixes first
+    for pattern in aggressive_patterns:
+        if pattern.count(r'\w+') == 4:  # 3 words + domain
+            fixed_text = re.sub(pattern, r'\1\2\3@\4.com', fixed_text, flags=re.IGNORECASE)
+        else:  # 2 words + domain
+            fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+    
+    # Handle other speech recognition patterns
+    other_patterns = [
+        # Handle triple splits: "manuel stack gmail.com" -> "manuelstack@gmail.com"  
+        r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b',
+        # Handle "at" instead of @: "manuel stack at gmail.com" -> "manuelstack@gmail.com"
+        r'\b(\w+)\s+(\w+)\s+at\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b',
+        # Handle "dot com": "manuel stack gmail dot com" -> "manuelstack@gmail.com"
+        r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\s+dot\s+com\b',
+        # Handle basic space splits: "username @domain.com" -> "username@domain.com"
+        r'\b(\w+)\s+@(\w+\.\w+)\b',
+    ]
+    
+    # Apply other fixes
+    for pattern in other_patterns:
+        if 'dot\s+com' in pattern:
+            fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+        elif 'at\s+' in pattern:
+            fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+        elif '@' in pattern:
+            fixed_text = re.sub(pattern, r'\1@\2', fixed_text, flags=re.IGNORECASE)
+        else:
+            fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+    
+    # Clean up common speech recognition substitutions
+    speech_fixes = {
+        r'\bstack@': 'stagg@',  # "stack" -> "stagg"
+        r'\bstag@': 'stagg@',   # "stag" -> "stagg"  
+        r'\bstac@': 'stagg@',   # "stac" -> "stagg"
+    }
+    
+    for pattern, replacement in speech_fixes.items():
+        fixed_text = re.sub(pattern, replacement, fixed_text, flags=re.IGNORECASE)
     
     return fixed_text
 

@@ -18,6 +18,7 @@ except ImportError:
 
 # Import email libraries
 import smtplib
+import ssl
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
@@ -29,13 +30,13 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    # Email credentials are now OPTIONAL - system works without them
-    "email_smtp_server": os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com"),
-    "email_smtp_port": int(os.getenv("EMAIL_SMTP_PORT", "587")),
+    # Email configuration - supports multiple providers
+    "email_provider": os.getenv("EMAIL_PROVIDER", "networksolutions").lower(),
+    "email_smtp_server": os.getenv("SMTP_SERVER", os.getenv("EMAIL_SMTP_SERVER", "netsol-smtp-oxcs.hostingplatform.com")),
+    "email_smtp_port": int(os.getenv("SMTP_PORT", os.getenv("EMAIL_SMTP_PORT", "587"))),
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
-    # Flexible email options (no credentials needed)
-    "email_webhook_url": os.getenv("EMAIL_WEBHOOK_URL", ""),
+    "email_name": os.getenv("EMAIL_NAME", "Voice Command System"),
     "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly,cimanka, seemahnkah".split(","),
     "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
@@ -86,19 +87,132 @@ class TwilioClient:
         except Exception as e:
             return {"error": f"Failed to send SMS: {str(e)}"}
 
+class EmailService:
+    """SMTP Email service with provider support"""
+    
+    def __init__(self, smtp_server: str, smtp_port: int, email_address: str, 
+                 email_password: str, email_name: str, email_provider: str):
+        print(f"🔍 DEBUG - EmailService init called with:")
+        print(f"   smtp_server: {smtp_server}")
+        print(f"   smtp_port: {smtp_port}")
+        print(f"   email_address: {email_address}")
+        print(f"   email_provider: {email_provider}")
+        
+        self.smtp_server = smtp_server
+        self.smtp_port = smtp_port
+        self.email_address = email_address
+        self.email_password = email_password
+        self.email_name = email_name
+        self.email_provider = email_provider.lower()
+        
+        print(f"🔍 DEBUG - Before _configure_provider_defaults:")
+        print(f"   self.smtp_server: {self.smtp_server}")
+        print(f"   self.smtp_port: {self.smtp_port}")
+        
+        self._configure_provider_defaults()
+        
+        print(f"🔍 DEBUG - After _configure_provider_defaults:")
+        print(f"   self.smtp_server: {self.smtp_server}")
+        print(f"   self.smtp_port: {self.smtp_port}")
+        
+        if email_address and email_password:
+            print(f"✅ Email client configured for {self.email_provider.title()}")
+            print(f"📧 SMTP Server: {self.smtp_server}:{self.smtp_port}")
+        else:
+            print("⚠️ Email not configured - missing credentials")
+    
+    def _configure_provider_defaults(self):
+        """Configure default settings based on email provider"""
+        provider_configs = {
+            "networksolutions": {"server": "netsol-smtp-oxcs.hostingplatform.com", "port": 587},
+            "gmail": {"server": "smtp.gmail.com", "port": 587},
+            "outlook": {"server": "smtp-mail.outlook.com", "port": 587},
+            "hotmail": {"server": "smtp-mail.outlook.com", "port": 587},
+            "yahoo": {"server": "smtp.mail.yahoo.com", "port": 587}
+        }
+        
+        if self.email_provider in provider_configs:
+            config = provider_configs[self.email_provider]
+            # Only use defaults if not explicitly configured
+            if self.smtp_server in ["smtp.gmail.com", "netsol-smtp-oxcs.hostingplatform.com"] or not self.smtp_server:
+                self.smtp_server = config["server"]
+                self.smtp_port = config["port"]
+    
+    def send_email(self, to: str, subject: str, message: str, is_html: bool = False) -> Dict[str, Any]:
+        """Send email via SMTP"""
+        if not self.email_address or not self.email_password:
+            return {"success": False, "error": "Email client not configured"}
+        
+        print(f"🔍 DEBUG - Attempting to send email:")
+        print(f"   Using SMTP Server: {self.smtp_server}:{self.smtp_port}")
+        print(f"   From: {self.email_address}")
+        print(f"   To: {to}")
+        print(f"   Provider: {self.email_provider}")
+        
+        try:
+            msg = MIMEMultipart()
+            msg['From'] = f"{self.email_name} <{self.email_address}>"
+            msg['To'] = to
+            msg['Subject'] = subject
+            
+            body_type = "html" if is_html else "plain"
+            msg.attach(MIMEText(message, body_type))
+            
+            print(f"🔍 DEBUG - Connecting to SMTP server: {self.smtp_server}:{self.smtp_port}")
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                print(f"🔍 DEBUG - Connected! Starting TLS...")
+                server.starttls()
+                print(f"🔍 DEBUG - TLS started! Attempting login...")
+                server.login(self.email_address, self.email_password)
+                print(f"🔍 DEBUG - Login successful! Sending email...")
+                server.sendmail(self.email_address, to, msg.as_string())
+                print(f"🔍 DEBUG - Email sent successfully!")
+            
+            return {
+                "success": True,
+                "to": to,
+                "from": self.email_address,
+                "subject": subject,
+                "body": message,
+                "timestamp": datetime.now().isoformat(),
+                "provider": self.email_provider
+            }
+            
+        except Exception as e:
+            print(f"🔍 DEBUG - Email send failed with error: {str(e)}")
+            return {"success": False, "error": f"Failed to send email: {str(e)}"}
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """Test email connection"""
+        if not self.email_address or not self.email_password:
+            return {"success": False, "error": "Email credentials not configured"}
+        
+        try:
+            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
+                server.starttls()
+                server.login(self.email_address, self.email_password)
+            
+            return {"success": True, "message": "Email connection successful"}
+            
+        except Exception as e:
+            return {"success": False, "error": f"Email connection failed: {str(e)}"}
+
 class EmailClient:
-    """Optional email client - system works without it"""
+    """Wrapper for EmailService to maintain compatibility"""
     
     def __init__(self):
-        self.smtp_server = CONFIG["email_smtp_server"]
-        self.smtp_port = CONFIG["email_smtp_port"]
-        self.email_address = CONFIG["email_address"]
-        self.email_password = CONFIG["email_password"]
-        
-        if self.email_address and self.email_password:
-            print("✅ Optional SMTP email configured")
-        else:
-            print("💡 SMTP email not configured - using flexible email services")
+        self.email_service = EmailService(
+            smtp_server=CONFIG["email_smtp_server"],
+            smtp_port=CONFIG["email_smtp_port"],
+            email_address=CONFIG["email_address"],
+            email_password=CONFIG["email_password"],
+            email_name=CONFIG["email_name"],
+            email_provider=CONFIG["email_provider"]
+        )
+    
+    def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
+        """Send email using EmailService"""
+        return self.email_service.send_email(to, subject, message)
     
     def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
         """Send email via SMTP"""
@@ -1050,6 +1164,41 @@ def execute():
     except Exception as e:
         return jsonify({"response": f"Error: {str(e)}"}), 500
 
+@app.route('/test-email', methods=['POST'])
+def test_email():
+    """Test email configuration"""
+    try:
+        data = request.json
+        test_email = data.get("email", "test@example.com")
+        
+        if CONFIG["email_address"] and CONFIG["email_password"]:
+            # Test connection first
+            connection_test = email_client.email_service.test_connection()
+            if not connection_test.get("success"):
+                return jsonify({"error": f"Email connection failed: {connection_test.get('error')}"})
+            
+            # Send test email
+            result = email_client.send_email(
+                test_email, 
+                "Test Email from Voice Command System", 
+                "This is a test email sent from your Voice Command System to verify email configuration is working correctly."
+            )
+            
+            if result.get("success"):
+                return jsonify({
+                    "success": True, 
+                    "message": f"Test email sent successfully to {test_email}",
+                    "provider": CONFIG["email_provider"],
+                    "from": result.get("from")
+                })
+            else:
+                return jsonify({"error": result.get("error")})
+        else:
+            return jsonify({"error": "Email not configured. Please set EMAIL_ADDRESS and EMAIL_PASSWORD environment variables."})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)})
+
 @app.route('/health', methods=['GET'])
 def health_check():
     return jsonify({
@@ -1057,11 +1206,12 @@ def health_check():
         "wake_word_enabled": CONFIG["wake_word_enabled"],
         "wake_word_primary": CONFIG["wake_word_primary"],
         "twilio_configured": bool(twilio_client.client),
-        "email_options": {
-            "smtp_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
-            "webhook_configured": bool(CONFIG["email_webhook_url"]),
-            "flexible_services": ["EmailJS", "Formspree", "Webhook"],
-            "no_credentials_required": True
+        "email_config": {
+            "provider": CONFIG["email_provider"],
+            "configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
+            "supported_providers": ["gmail", "outlook", "yahoo", "networksolutions", "hotmail"],
+            "smtp_server": CONFIG["email_smtp_server"],
+            "smtp_port": CONFIG["email_smtp_port"]
         },
         "claude_configured": bool(CONFIG["claude_api_key"])
     })
@@ -1070,9 +1220,33 @@ if __name__ == '__main__':
     print("🚀 Starting Enhanced Wake Word SMS & Email App")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
-    print(f"📧 Email: {'✅ Flexible services enabled (no hardcoded credentials needed)' if True else '❌ Not available'}")
+    
+    # DEBUG: Print all email environment variables
+    print("🔍 DEBUG - Environment Variables:")
+    print(f"   EMAIL_PROVIDER env var: {os.getenv('EMAIL_PROVIDER', 'NOT SET')}")
+    print(f"   SMTP_SERVER env var: {os.getenv('SMTP_SERVER', 'NOT SET')}")
+    print(f"   EMAIL_ADDRESS env var: {os.getenv('EMAIL_ADDRESS', 'NOT SET')}")
+    print(f"   SMTP_PORT env var: {os.getenv('SMTP_PORT', 'NOT SET')}")
+    
+    # DEBUG: Print CONFIG values
+    print("🔍 DEBUG - CONFIG Values:")
+    print(f"   config email_provider: {CONFIG['email_provider']}")
+    print(f"   config email_smtp_server: {CONFIG['email_smtp_server']}")
+    print(f"   config email_smtp_port: {CONFIG['email_smtp_port']}")
+    print(f"   config email_address: {CONFIG['email_address']}")
+    
+    email_status = "✅ Ready" if CONFIG['email_address'] and CONFIG['email_password'] else "⚠️ Not configured"
+    print(f"📧 Email ({CONFIG['email_provider'].title()}): {email_status}")
     if CONFIG['email_address']:
-        print(f"📧 Optional SMTP: ✅ Available as backup")
+        print(f"   └─ Provider: {CONFIG['email_provider'].title()}")
+        print(f"   └─ Server: {CONFIG['email_smtp_server']}:{CONFIG['email_smtp_port']}")
+        print(f"   └─ Account: {CONFIG['email_address']}")
+        print(f"   └─ Display Name: {CONFIG['email_name']}")
+        print(f"   └─ Ready to send FROM {CONFIG['email_address']} TO any recipient!")
+    else:
+        print(f"   └─ Supported: Gmail, Outlook, Yahoo, Network Solutions")
+        print(f"   └─ Configure: EMAIL_PROVIDER, EMAIL_ADDRESS, EMAIL_PASSWORD")
+    
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
     port = int(os.environ.get("PORT", 10000))

@@ -323,20 +323,19 @@ def fix_email_addresses(text: str) -> str:
     
     # Apply aggressive fixes first
     for pattern in aggressive_patterns:
-        if pattern.count(r'\w+') == 4:  # 3 words + domain
+        if r'\w+' in pattern and pattern.count(r'(\w+)') == 4:  # 3 words + domain
             fixed_text = re.sub(pattern, r'\1\2\3@\4.com', fixed_text, flags=re.IGNORECASE)
         else:  # 2 words + domain
-            fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+            if r'(\w+)\.com' in pattern:
+                fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+            else:
+                fixed_text = re.sub(pattern, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
     
     # Handle other speech recognition patterns
     other_patterns = [
-        # Handle triple splits: "manuel stack gmail.com" -> "manuelstack@gmail.com"  
         r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b',
-        # Handle "at" instead of @: "manuel stack at gmail.com" -> "manuelstack@gmail.com"
         r'\b(\w+)\s+(\w+)\s+at\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b',
-        # Handle "dot com": "manuel stack gmail dot com" -> "manuelstack@gmail.com"
         r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\s+dot\s+com\b',
-        # Handle basic space splits: "username @domain.com" -> "username@domain.com"
         r'\b(\w+)\s+@(\w+\.\w+)\b',
     ]
     

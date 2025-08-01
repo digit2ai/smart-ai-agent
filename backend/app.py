@@ -206,13 +206,16 @@ class WakeWordProcessor:
         email_command = extract_email_command(command_text)
         if email_command:
             email_command["wake_word_info"] = wake_result
+            print(f"📧 Email command created with action: {email_command.get('action')}")
             return email_command
         
         # Fallback to Claude
         try:
+            print(f"🤖 Falling back to Claude for command: {command_text}")
             claude_result = call_claude(command_text)
             if claude_result and "error" not in claude_result:
                 claude_result["wake_word_info"] = wake_result
+                print(f"🤖 Claude returned action: {claude_result.get('action')}")
                 return claude_result
         except Exception as e:
             print(f"Claude error: {e}")
@@ -436,11 +439,14 @@ def handle_send_email(data):
 def dispatch_action(parsed):
     """Simple action dispatcher"""
     action = parsed.get("action")
+    print(f"🔧 Dispatching action: '{action}'")
+    
     if action == "send_message":
         return handle_send_message(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
     else:
+        print(f"❌ Unknown action received: '{action}'")
         return f"Unknown action: {action}"
 
 # Always Listening HTML Template with Enhanced Wake Word Detection

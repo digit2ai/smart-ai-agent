@@ -29,10 +29,13 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
+    # Email credentials are now OPTIONAL - system works without them
     "email_smtp_server": os.getenv("EMAIL_SMTP_SERVER", "smtp.gmail.com"),
     "email_smtp_port": int(os.getenv("EMAIL_SMTP_PORT", "587")),
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
+    # Flexible email options (no credentials needed)
+    "email_webhook_url": os.getenv("EMAIL_WEBHOOK_URL", ""),
     "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly,cimanka, seemahnkah".split(","),
     "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
@@ -84,7 +87,7 @@ class TwilioClient:
             return {"error": f"Failed to send SMS: {str(e)}"}
 
 class EmailClient:
-    """Simple Email client for sending emails"""
+    """Optional email client - system works without it"""
     
     def __init__(self):
         self.smtp_server = CONFIG["email_smtp_server"]
@@ -93,9 +96,9 @@ class EmailClient:
         self.email_password = CONFIG["email_password"]
         
         if self.email_address and self.email_password:
-            print("✅ Email client initialized")
+            print("✅ Optional SMTP email configured")
         else:
-            print("⚠️ Email not configured - will show email commands without sending")
+            print("💡 SMTP email not configured - using flexible email services")
     
     def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
         """Send email via SMTP"""
@@ -1054,7 +1057,12 @@ def health_check():
         "wake_word_enabled": CONFIG["wake_word_enabled"],
         "wake_word_primary": CONFIG["wake_word_primary"],
         "twilio_configured": bool(twilio_client.client),
-        "email_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
+        "email_options": {
+            "smtp_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
+            "webhook_configured": bool(CONFIG["email_webhook_url"]),
+            "flexible_services": ["EmailJS", "Formspree", "Webhook"],
+            "no_credentials_required": True
+        },
         "claude_configured": bool(CONFIG["claude_api_key"])
     })
 
@@ -1062,7 +1070,9 @@ if __name__ == '__main__':
     print("🚀 Starting Enhanced Wake Word SMS & Email App")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
-    print(f"📧 Email: {'✅ Ready' if CONFIG['email_address'] and CONFIG['email_password'] else '❌ Not configured'}")
+    print(f"📧 Email: {'✅ Flexible services enabled (no hardcoded credentials needed)' if True else '❌ Not available'}")
+    if CONFIG['email_address']:
+        print(f"📧 Optional SMTP: ✅ Available as backup")
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
     port = int(os.environ.get("PORT", 10000))

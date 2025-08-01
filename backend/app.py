@@ -95,7 +95,7 @@ class EmailClient:
         if self.email_address and self.email_password:
             print("✅ Email client initialized")
         else:
-            print("⚠️ Email not configured")
+            print("⚠️ Email not configured - will show email commands without sending")
     
     def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
         """Send email via SMTP"""
@@ -300,7 +300,7 @@ def fix_email_addresses(text: str) -> str:
     return fixed_text
 
 def extract_email_command(text: str) -> Dict[str, Any]:
-    """Extract email command from text"""
+    """Extract email command from text and convert to SMS notification"""
     # Fix email addresses first
     original_text = text
     fixed_text = fix_email_addresses(text)
@@ -333,9 +333,10 @@ def extract_email_command(text: str) -> Dict[str, Any]:
             message = message.replace(" period", ".").replace(" comma", ",")
             subject = subject.replace(" period", ".").replace(" comma", ",")
             
+            # Convert to SMS notification instead of email
             return {
-                "action": "send_email",
-                "recipient": recipient,
+                "action": "send_email_as_sms",
+                "email_recipient": recipient,
                 "subject": subject,
                 "message": message
             }

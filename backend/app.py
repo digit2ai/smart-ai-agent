@@ -470,11 +470,11 @@ def get_html_template():
                             // Check if it's just a wake word with no meaningful content
                             const justWakeWord = wakeWords.some(wake => commandLower.trim() === wake.toLowerCase());
                             
-                            let waitTime = 2000; // Default 2 seconds
+                            let waitTime = 4000; // Default 4 seconds (increased from 2)
                             
                             // If it's just a wake word OR missing essential parts, wait much longer
                             if (justWakeWord || !hasActionWord || (!hasPhoneNumber || !hasSaying)) {{
-                                waitTime = 5000; // Wait 5 seconds for complete command
+                                waitTime = 8000; // Wait 8 seconds for complete command (increased from 5)
                                 console.log('Command incomplete - waiting longer for full command...');
                                 updateUI('wake-detected', '⏳ Capturing complete command...', '⏳');
                             }} else {{
@@ -491,7 +491,7 @@ def get_html_template():
                             bufferTimeout = setTimeout(() => {{
                                 commandBuffer = '';
                                 console.log('Buffer cleared - no wake word found');
-                            }}, 3000);
+                            }}, 6000); // Increased from 3 seconds to 6 seconds
                         }}
                     }}
                 }};

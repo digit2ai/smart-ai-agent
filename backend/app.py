@@ -536,6 +536,11 @@ def get_html_template():
         let continuousListening = true;
         let commandBuffer = '';
         let bufferTimeout = null;
+        let retryCount = 0;
+        let maxRetries = 3;
+        let retryDelay = 2000;
+        let lastError = null;
+        let shouldStop = false;
 
         const voiceIndicator = document.getElementById('voiceIndicator');
         const statusText = document.getElementById('statusText');
@@ -577,8 +582,11 @@ def get_html_template():
                 recognition.maxAlternatives = 1;
 
                 recognition.onstart = function() {{
-                    console.log('Speech recognition started');
+                    console.log('Speech recognition started successfully');
                     isListening = true;
+                    retryCount = 0; // Reset retry count on successful start
+                    lastError = null; // Clear last error
+                    shouldStop = false; // Reset stop flag
                     updateUI('listening', '🎤 Listening for wake word...', '👂');
                 }};
 
@@ -651,30 +659,91 @@ def get_html_template():
                 }};
 
                 recognition.onerror = function(event) {{
-                    console.log('Speech recognition event:', event.error);
+                    console.log('Speech recognition error:', event.error);
+                    lastError = event.error;
+                    
+                    // Handle different error types
                     if (event.error === 'no-speech') {{
                         console.log('No speech detected, continuing to listen...');
+                        return; // Don't restart for no-speech
+                    }}
+                    
+                    if (event.error === 'aborted') {{
+                        console.log('Speech recognition aborted - STOPPING all restart attempts');
+                        shouldStop = true;
+                        continuousListening = false;
+                        retryCount = maxRetries; // Force max retries
+                        
+                        setTimeout(() => {{
+                            updateUI('idle', 'Speech recognition was blocked by browser. Please click Start Listening to try again.', '❌');
+                            startButton.disabled = false;
+                            stopButton.disabled = true;
+                        }}, 100);
                         return;
                     }}
+                    
                     let errorMessage = 'Recognition error: ';
                     switch(event.error) {{
-                        case 'network': errorMessage += 'Network error. Check connection.'; break;
-                        case 'not-allowed': errorMessage += 'Microphone access denied.'; stopListening(); break;
-                        case 'service-not-allowed': errorMessage += 'Speech service not allowed.'; stopListening(); break;
-                        default: errorMessage += event.error;
+                        case 'network': 
+                            errorMessage += 'Network error. Check connection.'; 
+                            break;
+                        case 'not-allowed': 
+                            errorMessage += 'Microphone access denied.'; 
+                            shouldStop = true;
+                            continuousListening = false;
+                            stopListening(); 
+                            return;
+                        case 'service-not-allowed': 
+                            errorMessage += 'Speech service not allowed.'; 
+                            shouldStop = true;
+                            continuousListening = false;
+                            stopListening(); 
+                            return;
+                        default: 
+                            errorMessage += event.error;
                     }}
+                    
                     console.error('Speech recognition error:', errorMessage);
                     updateUI('idle', errorMessage, '❌');
-                    setTimeout(() => {{ if (continuousListening && !isListening) {{ restartListening(); }} }}, 2000);
+                    
+                    // Stop trying after any error
+                    retryCount++;
+                    if (retryCount >= maxRetries) {{
+                        console.log('Max retries reached, stopping completely');
+                        shouldStop = true;
+                        continuousListening = false;
+                        updateUI('idle', 'Speech recognition failed. Click Start Listening to try again.', '❌');
+                        startButton.disabled = false;
+                        stopButton.disabled = true;
+                    }}
                 }};
 
                 recognition.onend = function() {{
                     console.log('Speech recognition ended');
                     isListening = false;
-                    if (continuousListening && !isProcessingCommand) {{
-                        setTimeout(() => {{ if (continuousListening) {{ restartListening(); }} }}, 100);
+                    
+                    // Don't restart if we should stop or hit certain errors
+                    if (shouldStop || lastError === 'aborted' || !continuousListening || isProcessingCommand) {{
+                        console.log('Not restarting - shouldStop:', shouldStop, 'lastError:', lastError, 'continuousListening:', continuousListening);
+                        updateUI('idle', 'Speech recognition stopped', '🎤');
+                        startButton.disabled = false;
+                        stopButton.disabled = true;
+                        return;
+                    }}
+                    
+                    if (continuousListening && retryCount < maxRetries) {{
+                        // Add delay before restart to prevent rapid cycling
+                        setTimeout(() => {{ 
+                            if (continuousListening && !shouldStop && !isListening) {{ 
+                                console.log('Attempting restart from onend');
+                                restartListening(); 
+                            }}
+                        }}, 1000); // Increased delay
                     }} else {{
-                        updateUI('idle', 'Stopped listening', '🎤');
+                        console.log('Max retries reached in onend, stopping');
+                        continuousListening = false;
+                        shouldStop = true;
+                        updateUI('idle', 'Speech recognition stopped. Click Start Listening to restart.', '🎤');
                         startButton.disabled = false;
                         stopButton.disabled = true;
                     }}
@@ -819,44 +888,97 @@ def get_html_template():
                 alert('Speech recognition not available in this browser.');
                 return;
             }}
+            
+            // Stop any existing recognition first
+            if (isListening) {{
+                try {{
+                    recognition.stop();
+                }} catch (e) {{
+                    console.log('Error stopping existing recognition:', e);
+                }}
+            }}
+            
+            // Reset ALL state variables
             continuousListening = true;
+            retryCount = 0;
+            lastError = null;
+            shouldStop = false;
             startButton.disabled = true;
             stopButton.disabled = false;
             response.style.display = 'none';
             commandBuffer = '';
-            try {{
-                recognition.start();
-            }} catch (error) {{
-                console.error('Error starting recognition:', error);
-                updateUI('idle', 'Error starting recognition', '❌');
-                startButton.disabled = false;
-                stopButton.disabled = true;
-            }}
+            
+            console.log('Starting fresh speech recognition attempt');
+            
+            // Wait a moment then start
+            setTimeout(() => {{
+                try {{
+                    if (!isListening && !shouldStop) {{ // Double check we're not already listening
+                        console.log('Calling recognition.start()');
+                        recognition.start();
+                    }}
+                }} catch (error) {{
+                    console.error('Error starting recognition:', error);
+                    updateUI('idle', 'Error starting recognition. Please try again.', '❌');
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
+                    continuousListening = false;
+                    shouldStop = true;
+                }}
+            }}, 100);
         }}
 
         function stopListening() {{
             continuousListening = false;
+            shouldStop = true; // Set stop flag
+            retryCount = 0; // Reset retry count
+            lastError = null; // Clear last error
+            
             if (recognition && isListening) {{
-                recognition.stop();
+                try {{
+                    recognition.stop();
+                }} catch (error) {{
+                    console.error('Error stopping recognition:', error);
+                }}
             }}
+            
             updateUI('idle', 'Stopped listening', '🎤');
             startButton.disabled = false;
             stopButton.disabled = true;
             transcriptionText.textContent = 'Waiting for wake word command...';
             transcription.classList.remove('active');
             commandBuffer = '';
+            
             if (bufferTimeout) {{
                 clearTimeout(bufferTimeout);
             }}
         }}
 
         function restartListening() {{
-            if (continuousListening && recognition && !isListening) {{
-                try {{
-                    recognition.start();
-                }} catch (error) {{
-                    console.error('Error restarting recognition:', error);
-                    setTimeout(() => {{ if (continuousListening) {{ restartListening(); }} }}, 1000);
+            if (shouldStop || !continuousListening || !recognition || isListening || retryCount >= maxRetries) {{
+                console.log('Not restarting - shouldStop:', shouldStop, 'continuousListening:', continuousListening, 'isListening:', isListening, 'retryCount:', retryCount);
+                return;
+            }}
+            
+            try {{
+                console.log('Attempting to restart speech recognition...');
+                recognition.start();
+            }} catch (error) {{
+                console.error('Error restarting recognition:', error);
+                retryCount++;
+                if (retryCount < maxRetries && !shouldStop) {{
+                    setTimeout(() => {{ 
+                        if (continuousListening && !shouldStop) {{ 
+                            restartListening(); 
+                        }} 
+                    }}, retryDelay);
+                }} else {{
+                    console.log('Max retries reached in restart, stopping');
+                    shouldStop = true;
+                    continuousListening = false;
+                    updateUI('idle', 'Speech recognition failed. Click Start Listening to try again.', '❌');
+                    startButton.disabled = false;
+                    stopButton.disabled = true;
                 }}
             }}
         }}
@@ -884,6 +1006,10 @@ def get_html_template():
 @app.route("/")
 def root():
     return get_html_template()
+
+@app.route('/favicon.ico')
+def favicon():
+    return '', 204  # No content, prevents 404 error
 
 @app.route('/execute', methods=['POST'])
 def execute():

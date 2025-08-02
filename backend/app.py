@@ -278,8 +278,8 @@ class HubSpotService:
                 "dealname": task_name,
                 "dealstage": "appointmentscheduled",  # Use existing stage
                 "pipeline": "default",
-                "amount": "0",  # Tasks have no monetary value
-                "deal_type": "Task"  # Custom identifier
+                "amount": "0"  # Tasks have no monetary value
+                # Removed "deal_type" - property doesn't exist
             }
             
             if description:
@@ -320,8 +320,8 @@ class HubSpotService:
                 "dealname": meeting_name,
                 "dealstage": "appointmentscheduled",
                 "pipeline": "default",
-                "amount": "0",  # Meetings have no monetary value
-                "deal_type": "Meeting"
+                "amount": "0"  # Meetings have no monetary value
+                # Removed "deal_type" - property doesn't exist
             }
             
             # Add meeting details to description

@@ -1,5 +1,5 @@
-# Enhanced Flask Wake Word App - SMS, Email, CRM & Google Calendar Integration
-from flask import Flask, request, jsonify, redirect, session, url_for
+# Enhanced Flask Wake Word App - SMS, Email & CRM with HubSpot Integration
+from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
@@ -7,7 +7,6 @@ import os
 import re
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
-import base64
 
 # Import Twilio REST API client
 try:
@@ -17,18 +16,6 @@ except ImportError:
     TWILIO_AVAILABLE = False
     print("Twilio library not installed. Run: pip install twilio")
 
-# Import Google Calendar libraries
-try:
-    from google.oauth2.credentials import Credentials
-    from google_auth_oauthlib.flow import Flow
-    from googleapiclient.discovery import build
-    from google.auth.transport.requests import Request
-    import google.auth.exceptions
-    GOOGLE_CALENDAR_AVAILABLE = True
-except ImportError:
-    GOOGLE_CALENDAR_AVAILABLE = False
-    print("Google Calendar libraries not installed. Run: pip install google-auth google-auth-oauthlib google-auth-httplib2 google-api-python-client")
-
 # Import email libraries
 import smtplib
 import ssl
@@ -37,9 +24,6 @@ from email.mime.multipart import MIMEMultipart
 
 app = Flask(__name__)
 CORS(app)
-
-# Set secret key for sessions (required for Google OAuth)
-app.secret_key = os.getenv("SECRET_KEY", "your-secret-key-change-this-in-production")
 
 CONFIG = {
     "claude_api_key": os.getenv("CLAUDE_API_KEY", ""),
@@ -55,9 +39,6 @@ CONFIG = {
     "email_name": os.getenv("EMAIL_NAME", "Voice Command System"),
     # HubSpot CRM configuration
     "hubspot_api_token": os.getenv("HUBSPOT_API_TOKEN", ""),
-    # Google Calendar configuration
-    "google_calendar_enabled": os.getenv("GOOGLE_CALENDAR_ENABLED", "false").lower() == "true",
-    "google_calendar_credentials": os.getenv("GOOGLE_CALENDAR_CREDENTIALS", ""),
     # Wake word configuration - Updated to Manny
     "wake_words": "hey manny,manny,hey ai assistant,ai assistant,hey voice assistant,voice assistant".split(","),
     "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey manny"),
@@ -66,276 +47,8 @@ CONFIG = {
 
 print(f"🎙️ Wake words: {CONFIG['wake_words']}")
 print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
-print(f"📅 Google Calendar: {'✅ Configured' if CONFIG['google_calendar_enabled'] and CONFIG['google_calendar_credentials'] else '❌ Not configured'}")
 
-# ==================== GOOGLE CALENDAR SERVICE ====================
-
-class GoogleCalendarService:
-    """Google Calendar API service for voice command integration"""
-    
-    def __init__(self):
-        self.enabled = CONFIG["google_calendar_enabled"]
-        self.credentials_json = CONFIG["google_calendar_credentials"]
-        self.scopes = ['https://www.googleapis.com/auth/calendar']
-        self.flow = None
-        self.service = None
-        
-        if self.enabled and self.credentials_json and GOOGLE_CALENDAR_AVAILABLE:
-            try:
-                # Parse credentials from environment
-                self.credentials_info = json.loads(self.credentials_json)
-                print("✅ Google Calendar service initialized")
-            except Exception as e:
-                print(f"❌ Google Calendar setup failed: {e}")
-                self.enabled = False
-        else:
-            print("⚠️ Google Calendar not configured")
-    
-    def get_authorization_url(self, state=None):
-        """Get Google OAuth authorization URL"""
-        if not self.enabled or not self.credentials_info:
-            return None
-        
-        try:
-            self.flow = Flow.from_client_config(
-                self.credentials_info,
-                scopes=self.scopes,
-                state=state
-            )
-            self.flow.redirect_uri = url_for('oauth_callback', _external=True)
-            
-            authorization_url, state = self.flow.authorization_url(
-                access_type='offline',
-                include_granted_scopes='true'
-            )
-            
-            return authorization_url, state
-            
-        except Exception as e:
-            print(f"Error creating authorization URL: {e}")
-            return None, None
-    
-    def exchange_code_for_credentials(self, authorization_code, state):
-        """Exchange authorization code for credentials"""
-        try:
-            if not self.flow:
-                self.flow = Flow.from_client_config(
-                    self.credentials_info,
-                    scopes=self.scopes,
-                    state=state
-                )
-                self.flow.redirect_uri = url_for('oauth_callback', _external=True)
-            
-            self.flow.fetch_token(code=authorization_code)
-            credentials = self.flow.credentials
-            
-            # Store credentials in session (in production, use a database)
-            session['google_credentials'] = {
-                'token': credentials.token,
-                'refresh_token': credentials.refresh_token,
-                'token_uri': credentials.token_uri,
-                'client_id': credentials.client_id,
-                'client_secret': credentials.client_secret,
-                'scopes': credentials.scopes
-            }
-            
-            return credentials
-            
-        except Exception as e:
-            print(f"Error exchanging code for credentials: {e}")
-            return None
-    
-    def get_credentials(self):
-        """Get valid credentials from session"""
-        if 'google_credentials' not in session:
-            return None
-        
-        try:
-            creds_info = session['google_credentials']
-            credentials = Credentials(
-                token=creds_info['token'],
-                refresh_token=creds_info['refresh_token'],
-                token_uri=creds_info['token_uri'],
-                client_id=creds_info['client_id'],
-                client_secret=creds_info['client_secret'],
-                scopes=creds_info['scopes']
-            )
-            
-            # Refresh if expired
-            if credentials.expired and credentials.refresh_token:
-                credentials.refresh(Request())
-                # Update session with new token
-                session['google_credentials']['token'] = credentials.token
-            
-            return credentials
-            
-        except Exception as e:
-            print(f"Error getting credentials: {e}")
-            return None
-    
-    def get_calendar_service(self):
-        """Get authenticated Calendar service"""
-        credentials = self.get_credentials()
-        if not credentials:
-            return None
-        
-        try:
-            return build('calendar', 'v3', credentials=credentials)
-        except Exception as e:
-            print(f"Error building calendar service: {e}")
-            return None
-    
-    def is_authenticated(self):
-        """Check if user is authenticated with Google Calendar"""
-        return self.get_credentials() is not None
-    
-    def get_calendar_events(self, start_date: str = "", end_date: str = "", max_results: int = 10) -> Dict[str, Any]:
-        """Get calendar events for specified date range"""
-        try:
-            service = self.get_calendar_service()
-            if not service:
-                return {"success": False, "error": "Not authenticated with Google Calendar. Please authorize access first."}
-            
-            # Default to today if no dates provided
-            if not start_date:
-                start_date = datetime.now().strftime("%Y-%m-%d")
-            if not end_date:
-                end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-            
-            # Convert to RFC3339 format
-            time_min = f"{start_date}T00:00:00Z"
-            time_max = f"{end_date}T23:59:59Z"
-            
-            events_result = service.events().list(
-                calendarId='primary',
-                timeMin=time_min,
-                timeMax=time_max,
-                maxResults=max_results,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            
-            events = events_result.get('items', [])
-            
-            return {
-                "success": True,
-                "message": f"Retrieved {len(events)} event(s)",
-                "events": events,
-                "count": len(events)
-            }
-            
-        except Exception as e:
-            return {"success": False, "error": f"Error retrieving calendar events: {str(e)}"}
-    
-    def create_calendar_event(self, title: str, start_time: str, duration: int = 60, description: str = "") -> Dict[str, Any]:
-        """Create a new calendar event"""
-        try:
-            service = self.get_calendar_service()
-            if not service:
-                return {"success": False, "error": "Not authenticated with Google Calendar. Please authorize access first."}
-            
-            # Parse start time
-            start_datetime = self._parse_datetime(start_time)
-            end_datetime = start_datetime + timedelta(minutes=duration)
-            
-            event = {
-                'summary': title,
-                'description': description,
-                'start': {
-                    'dateTime': start_datetime.isoformat(),
-                    'timeZone': 'America/New_York',
-                },
-                'end': {
-                    'dateTime': end_datetime.isoformat(),
-                    'timeZone': 'America/New_York',
-                },
-            }
-            
-            event_result = service.events().insert(calendarId='primary', body=event).execute()
-            
-            return {
-                "success": True,
-                "message": f"Calendar event created: {title}",
-                "event_id": event_result.get('id'),
-                "event_link": event_result.get('htmlLink'),
-                "data": event_result
-            }
-            
-        except Exception as e:
-            return {"success": False, "error": f"Error creating calendar event: {str(e)}"}
-    
-    def check_availability(self, start_time: str, duration: int = 60) -> Dict[str, Any]:
-        """Check if user is available at specified time"""
-        try:
-            service = self.get_calendar_service()
-            if not service:
-                return {"success": False, "error": "Not authenticated with Google Calendar. Please authorize access first."}
-            
-            start_datetime = self._parse_datetime(start_time)
-            end_datetime = start_datetime + timedelta(minutes=duration)
-            
-            # Check for conflicting events
-            time_min = start_datetime.isoformat() + 'Z'
-            time_max = end_datetime.isoformat() + 'Z'
-            
-            events_result = service.events().list(
-                calendarId='primary',
-                timeMin=time_min,
-                timeMax=time_max,
-                singleEvents=True,
-                orderBy='startTime'
-            ).execute()
-            
-            events = events_result.get('items', [])
-            conflicting_events = [e for e in events if e.get('status') != 'cancelled']
-            
-            is_available = len(conflicting_events) == 0
-            
-            return {
-                "success": True,
-                "available": is_available,
-                "conflicting_events": len(conflicting_events),
-                "message": f"{'Available' if is_available else 'Busy'} on {start_datetime.strftime('%Y-%m-%d at %I:%M %p')}"
-            }
-            
-        except Exception as e:
-            return {"success": False, "error": f"Error checking availability: {str(e)}"}
-    
-    def _parse_datetime(self, datetime_string: str) -> datetime:
-        """Parse natural language datetime to datetime object"""
-        datetime_string = datetime_string.lower().strip()
-        
-        if "tomorrow" in datetime_string:
-            base_date = datetime.now() + timedelta(days=1)
-            if "pm" in datetime_string or "am" in datetime_string:
-                time_match = re.search(r'(\d{1,2})\s*(am|pm)', datetime_string)
-                if time_match:
-                    hour = int(time_match.group(1))
-                    if time_match.group(2) == "pm" and hour != 12:
-                        hour += 12
-                    elif time_match.group(2) == "am" and hour == 12:
-                        hour = 0
-                    return base_date.replace(hour=hour, minute=0, second=0, microsecond=0)
-            return base_date.replace(hour=14, minute=0, second=0, microsecond=0)
-        
-        elif "today" in datetime_string:
-            base_date = datetime.now()
-            if "pm" in datetime_string or "am" in datetime_string:
-                time_match = re.search(r'(\d{1,2})\s*(am|pm)', datetime_string)
-                if time_match:
-                    hour = int(time_match.group(1))
-                    if time_match.group(2) == "pm" and hour != 12:
-                        hour += 12
-                    elif time_match.group(2) == "am" and hour == 12:
-                        hour = 0
-                    return base_date.replace(hour=hour, minute=0, second=0, microsecond=0)
-            return base_date.replace(hour=datetime.now().hour + 1, minute=0, second=0, microsecond=0)
-        
-        else:
-            # Default to 1 hour from now
-            return datetime.now() + timedelta(hours=1)
-
-# ==================== EXISTING SERVICES ====================
+# ==================== HUBSPOT CRM SERVICE ====================
 
 class HubSpotService:
     """HubSpot CRM API service for voice command integration using v3 API"""
@@ -566,6 +279,7 @@ class HubSpotService:
                 "dealstage": "appointmentscheduled",  # Use existing stage
                 "pipeline": "default",
                 "amount": "0"  # Tasks have no monetary value
+                # Removed "deal_type" - property doesn't exist
             }
             
             if description:
@@ -607,6 +321,7 @@ class HubSpotService:
                 "dealstage": "appointmentscheduled",
                 "pipeline": "default",
                 "amount": "0"  # Meetings have no monetary value
+                # Removed "deal_type" - property doesn't exist
             }
             
             # Add meeting details to description
@@ -672,7 +387,7 @@ class HubSpotService:
                         ]
                     }
                 ],
-                "properties": ["dealname", "description", "closedate"],
+                "properties": ["dealname", "description", "closedate", "deal_type"],
                 "limit": 50
             }
             
@@ -830,6 +545,27 @@ class HubSpotService:
                 return parsed.strftime("%Y-%m-%d")
             except:
                 return datetime.now().strftime("%Y-%m-%d")
+    
+    def _parse_datetime(self, datetime_string: str) -> datetime:
+        """Parse natural language datetime"""
+        datetime_string = datetime_string.lower().strip()
+        
+        if "tomorrow" in datetime_string:
+            base_date = datetime.now() + timedelta(days=1)
+            if "pm" in datetime_string or "am" in datetime_string:
+                time_match = re.search(r'(\d{1,2})\s*(am|pm)', datetime_string)
+                if time_match:
+                    hour = int(time_match.group(1))
+                    if time_match.group(2) == "pm" and hour != 12:
+                        hour += 12
+                    elif time_match.group(2) == "am" and hour == 12:
+                        hour = 0
+                    return base_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            return base_date.replace(hour=14, minute=0, second=0, microsecond=0)
+        else:
+            return datetime.now() + timedelta(hours=1)
+
+# ==================== EXISTING SERVICES ====================
 
 class TwilioClient:
     """Simple Twilio client for SMS"""
@@ -961,72 +697,7 @@ class EmailClient:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
 
-# ==================== GOOGLE CALENDAR COMMAND EXTRACTORS ====================
-
-def extract_google_calendar_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract Google Calendar commands from voice text"""
-    text_lower = text.lower().strip()
-    
-    # Create calendar event
-    create_patterns = [
-        r'create (?:calendar )?(?:event|meeting|appointment) (.+?)(?:\s+(?:on|for|at)\s+(.+?))?(?:\s+for\s+(\d+)\s+(?:minutes?|hours?))?$',
-        r'schedule (?:calendar )?(?:event|meeting|appointment) (.+?)(?:\s+(?:on|for|at)\s+(.+?))?(?:\s+for\s+(\d+)\s+(?:minutes?|hours?))?$',
-        r'add (?:to calendar|calendar event) (.+?)(?:\s+(?:on|for|at)\s+(.+?))?(?:\s+for\s+(\d+)\s+(?:minutes?|hours?))?$'
-    ]
-    
-    for pattern in create_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            title = match.group(1).strip()
-            when = match.group(2).strip() if match.group(2) else ""
-            duration = int(match.group(3)) if match.group(3) else 60
-            
-            return {
-                "action": "create_calendar_event",
-                "title": title,
-                "when": when,
-                "duration": duration
-            }
-    
-    # Show calendar
-    show_patterns = [
-        r'show (?:me )?(?:my )?(?:google )?calendar (?:for )?(.+?)$',
-        r'what(?:\'s| is) (?:on )?(?:my )?(?:google )?calendar (?:for )?(.+?)$',
-        r'check (?:my )?(?:google )?calendar (?:for )?(.+?)$'
-    ]
-    
-    for pattern in show_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            when = match.group(1).strip()
-            
-            return {
-                "action": "show_google_calendar",
-                "when": when
-            }
-    
-    # Check availability
-    availability_patterns = [
-        r'am i (?:free|available) (?:on )?(.+?)(?:\s+(?:for|at)\s+(\d+)\s+(?:minutes?|hours?))?$',
-        r'check (?:if )?(?:i\'m |i am )?(?:free|available) (?:on )?(.+?)(?:\s+(?:for|at)\s+(\d+)\s+(?:minutes?|hours?))?$',
-        r'do i have (?:time|availability) (?:on )?(.+?)(?:\s+(?:for|at)\s+(\d+)\s+(?:minutes?|hours?))?$'
-    ]
-    
-    for pattern in availability_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            when = match.group(1).strip()
-            duration = int(match.group(2)) if match.group(2) else 60
-            
-            return {
-                "action": "check_availability",
-                "when": when,
-                "duration": duration
-            }
-    
-    return None
-
-# ==================== EXISTING COMMAND EXTRACTORS ====================
+# ==================== CRM COMMAND EXTRACTORS ====================
 
 def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
     """Extract CRM contact commands from voice text"""
@@ -1217,7 +888,7 @@ def extract_crm_pipeline_command(text: str) -> Optional[Dict[str, Any]]:
 # ==================== ENHANCED WAKE WORD PROCESSOR ====================
 
 class WakeWordProcessor:
-    """Enhanced wake word detection with CRM and Google Calendar support"""
+    """Enhanced wake word detection with CRM support"""
     
     def __init__(self):
         self.wake_words = CONFIG["wake_words"]
@@ -1264,7 +935,7 @@ class WakeWordProcessor:
         }
     
     def process_wake_word_command(self, text: str) -> Dict[str, Any]:
-        """Enhanced process_wake_word_command with CRM and Google Calendar support"""
+        """Enhanced process_wake_word_command with CRM support"""
         wake_result = self.detect_wake_word(text)
         
         if not wake_result["has_wake_word"]:
@@ -1293,13 +964,6 @@ class WakeWordProcessor:
             email_command["wake_word_info"] = wake_result
             return email_command
         
-        # Try Google Calendar commands
-        calendar_command = extract_google_calendar_command(command_text)
-        if calendar_command:
-            calendar_command["wake_word_info"] = wake_result
-            print(f"📅 Google Calendar command: {calendar_command.get('action')}")
-            return calendar_command
-        
         # Try CRM contact commands
         contact_command = extract_crm_contact_command(command_text)
         if contact_command:
@@ -1315,11 +979,11 @@ class WakeWordProcessor:
             return task_command
         
         # Try CRM calendar commands
-        crm_calendar_command = extract_crm_calendar_command(command_text)
-        if crm_calendar_command:
-            crm_calendar_command["wake_word_info"] = wake_result
-            print(f"📅 CRM Calendar command: {crm_calendar_command.get('action')}")
-            return crm_calendar_command
+        calendar_command = extract_crm_calendar_command(command_text)
+        if calendar_command:
+            calendar_command["wake_word_info"] = wake_result
+            print(f"📅 CRM Calendar command: {calendar_command.get('action')}")
+            return calendar_command
         
         # Try CRM pipeline commands
         pipeline_command = extract_crm_pipeline_command(command_text)
@@ -1340,14 +1004,13 @@ class WakeWordProcessor:
         
         return {
             "success": False,
-            "error": f"I didn't understand: '{command_text}'. Try SMS, Email, CRM, or Google Calendar commands like 'create calendar event meeting tomorrow' or 'show my calendar today'"
+            "error": f"I didn't understand: '{command_text}'. Try SMS, Email, or CRM commands like 'create contact John Smith' or 'schedule meeting with client'"
         }
 
 # Initialize services
 twilio_client = TwilioClient()
 email_client = EmailClient()
-hubspot_service = HubSpotService()
-google_calendar_service = GoogleCalendarService()
+hubspot_service = HubSpotService()  # Changed from ghl_service
 wake_word_processor = WakeWordProcessor()
 
 # ==================== EXISTING HELPER FUNCTIONS ====================
@@ -1370,13 +1033,11 @@ Supported actions:
 - create_contact (supports CRM contact creation)
 - create_task (supports CRM task creation)
 - schedule_meeting (supports CRM calendar)
-- create_calendar_event (supports Google Calendar)
 
 Response structure examples:
 {"action": "send_message", "recipient": "phone number", "message": "text"}
 {"action": "send_email", "recipient": "email", "subject": "subject", "message": "body"}
 {"action": "create_contact", "name": "Full Name", "email": "email", "phone": "phone"}
-{"action": "create_calendar_event", "title": "Meeting Title", "when": "tomorrow at 2pm", "duration": 60}
 """
         
         full_prompt = f"{instruction_prompt}\n\nUser: {prompt}"
@@ -1546,130 +1207,7 @@ def handle_send_email(data):
     else:
         return f"❌ Invalid email address: {recipient}"
 
-# ==================== GOOGLE CALENDAR ACTION HANDLERS ====================
-
-def handle_create_calendar_event(data):
-    """Handle creating Google Calendar events"""
-    title = data.get("title", "")
-    when = data.get("when", "")
-    duration = data.get("duration", 60)
-    
-    if not title:
-        return "❌ Event title is required"
-    
-    # Check if user is authenticated
-    if not google_calendar_service.is_authenticated():
-        auth_url, state = google_calendar_service.get_authorization_url()
-        if auth_url:
-            session['oauth_state'] = state
-            return f"📅 To create calendar events, please authorize Google Calendar access first:\n\n🔗 Click here: {auth_url}\n\nAfter authorization, try your command again!"
-        else:
-            return "❌ Google Calendar not configured properly"
-    
-    if not when:
-        when = "1 hour from now"
-    
-    result = google_calendar_service.create_calendar_event(title, when, duration)
-    
-    if result.get("success"):
-        response = f"✅ Calendar event created: {title}"
-        response += f"\n📅 Time: {when}"
-        response += f"\n⏰ Duration: {duration} minutes"
-        if result.get("event_link"):
-            response += f"\n🔗 View: {result.get('event_link')}"
-        return response
-    else:
-        return f"❌ Failed to create calendar event: {result.get('error')}"
-
-def handle_show_google_calendar(data):
-    """Handle showing Google Calendar events"""
-    when = data.get("when", "today")
-    
-    # Check if user is authenticated
-    if not google_calendar_service.is_authenticated():
-        auth_url, state = google_calendar_service.get_authorization_url()
-        if auth_url:
-            session['oauth_state'] = state
-            return f"📅 To view your calendar, please authorize Google Calendar access first:\n\n🔗 Click here: {auth_url}\n\nAfter authorization, try your command again!"
-        else:
-            return "❌ Google Calendar not configured properly"
-    
-    # Parse date range
-    if "today" in when.lower():
-        start_date = datetime.now().strftime("%Y-%m-%d")
-        end_date = start_date
-    elif "tomorrow" in when.lower():
-        tomorrow = datetime.now() + timedelta(days=1)
-        start_date = tomorrow.strftime("%Y-%m-%d")
-        end_date = start_date
-    elif "week" in when.lower():
-        start_date = datetime.now().strftime("%Y-%m-%d")
-        end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-    else:
-        start_date = datetime.now().strftime("%Y-%m-%d")
-        end_date = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
-    
-    result = google_calendar_service.get_calendar_events(start_date, end_date)
-    
-    if result.get("success"):
-        events = result.get("events", [])
-        if events:
-            response = f"📅 Google Calendar events for {when}:\n\n"
-            for i, event in enumerate(events[:10], 1):
-                summary = event.get('summary', 'No title')
-                start = event.get('start', {})
-                
-                # Format start time
-                start_time = ""
-                if 'dateTime' in start:
-                    try:
-                        dt = datetime.fromisoformat(start['dateTime'].replace('Z', '+00:00'))
-                        start_time = dt.strftime("%m/%d at %I:%M %p")
-                    except:
-                        start_time = start.get('dateTime', '')
-                elif 'date' in start:
-                    start_time = start.get('date', '')
-                
-                response += f"{i}. {summary}\n"
-                if start_time:
-                    response += f"   🕐 {start_time}\n"
-                response += "\n"
-            
-            return response.strip()
-        else:
-            return f"📅 No events found for {when}"
-    else:
-        return f"❌ Failed to get calendar events: {result.get('error')}"
-
-def handle_check_availability(data):
-    """Handle checking Google Calendar availability"""
-    when = data.get("when", "")
-    duration = data.get("duration", 60)
-    
-    if not when:
-        return "❌ Please specify when you want to check availability"
-    
-    # Check if user is authenticated
-    if not google_calendar_service.is_authenticated():
-        auth_url, state = google_calendar_service.get_authorization_url()
-        if auth_url:
-            session['oauth_state'] = state
-            return f"📅 To check availability, please authorize Google Calendar access first:\n\n🔗 Click here: {auth_url}\n\nAfter authorization, try your command again!"
-        else:
-            return "❌ Google Calendar not configured properly"
-    
-    result = google_calendar_service.check_availability(when, duration)
-    
-    if result.get("success"):
-        if result.get("available"):
-            return f"✅ You're available {result.get('message')}! 🎉"
-        else:
-            conflicting = result.get("conflicting_events", 0)
-            return f"❌ You're busy {result.get('message')} - {conflicting} conflicting event(s) found"
-    else:
-        return f"❌ Failed to check availability: {result.get('error')}"
-
-# ==================== CRM ACTION HANDLERS (EXISTING) ====================
+# ==================== CRM ACTION HANDLERS (UPDATED FOR HUBSPOT) ====================
 
 def handle_create_contact(data):
     """Handle creating new contact in HubSpot"""
@@ -1915,7 +1453,7 @@ def handle_show_pipeline_summary(data):
 # ==================== ENHANCED ACTION DISPATCHER ====================
 
 def dispatch_action(parsed):
-    """Enhanced action dispatcher with CRM and Google Calendar support"""
+    """Enhanced action dispatcher with CRM support"""
     action = parsed.get("action")
     print(f"🔧 Dispatching action: '{action}'")
     
@@ -1924,14 +1462,6 @@ def dispatch_action(parsed):
         return handle_send_message(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
-    
-    # Google Calendar actions
-    elif action == "create_calendar_event":
-        return handle_create_calendar_event(parsed)
-    elif action == "show_google_calendar":
-        return handle_show_google_calendar(parsed)
-    elif action == "check_availability":
-        return handle_check_availability(parsed)
     
     # CRM Contact actions
     elif action == "create_contact":
@@ -1961,20 +1491,18 @@ def dispatch_action(parsed):
     
     else:
         print(f"❌ Unknown action received: '{action}'")
-        return f"Unknown action: {action}. Supported: SMS, Email, Google Calendar, CRM Contact/Task/Calendar/Pipeline operations"
+        return f"Unknown action: {action}. Supported: SMS, Email, CRM Contact/Task/Calendar/Pipeline operations"
 
-# ==================== HTML TEMPLATE (Updated for Google Calendar) ====================
+# ==================== HTML TEMPLATE (Updated for Manny) ====================
 
 def get_html_template():
     primary_wake_word = CONFIG['wake_word_primary']
-    calendar_status = "✅ Google Calendar Ready" if google_calendar_service.enabled else "⚠️ Google Calendar Not Configured"
-    
     return f'''<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manny - Voice Assistant with Google Calendar & HubSpot CRM</title>
+    <title>Manny - Voice Assistant with HubSpot CRM</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
@@ -1982,9 +1510,6 @@ def get_html_template():
         .header h1 {{ font-size: 2.8em; margin-bottom: 10px; font-weight: 700; color: #4a69bd; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }}
         .header img {{ max-height: 300px; margin-bottom: 20px; max-width: 95%; border-radius: 15px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; color: #a0a0ff; }}
-        .integration-status {{ background: rgba(74, 105, 189, 0.1); border-radius: 10px; padding: 15px; margin-bottom: 20px; font-size: 0.9em; }}
-        .integration-status.ready {{ border: 1px solid #27ae60; }}
-        .integration-status.partial {{ border: 1px solid #f39c12; }}
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
         .voice-indicator {{ width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease; border: 3px solid transparent; }}
         .voice-indicator.listening {{ background: linear-gradient(45deg, #4a69bd, #0097e6); animation: pulse 2s infinite; box-shadow: 0 0 30px rgba(74, 105, 189, 0.8); border-color: #4a69bd; }}
@@ -2035,23 +1560,11 @@ def get_html_template():
         <div class="header">
             <h1>Manny</h1>
             <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Manny AI Assistant Logo" />
-            <p>Voice-powered business automation with Google Calendar & HubSpot CRM!</p>
-        </div>
-        
-        <div class="integration-status ready">
-            📅 {calendar_status} | 🏢 HubSpot CRM Ready | 📱 SMS Ready | 📧 Email Ready
+            <p>Voice-powered business automation with HubSpot CRM integration!</p>
         </div>
         
         <div class="capabilities">
-            <h3>🚀 Manny Enhanced Capabilities</h3>
-            <div class="capability-section">
-                <h4>📅 Google Calendar</h4>
-                <ul>
-                    <li>"Hey Manny create calendar event Team Meeting tomorrow at 2pm"</li>
-                    <li>"Hey Manny show my calendar for today"</li>
-                    <li>"Hey Manny am I free Friday at 3pm"</li>
-                </ul>
-            </div>
+            <h3>🚀 Manny Capabilities</h3>
             <div class="capability-section">
                 <h4>📱 Communication</h4>
                 <ul>
@@ -2068,11 +1581,11 @@ def get_html_template():
                 </ul>
             </div>
             <div class="capability-section">
-                <h4>📋 Tasks & CRM Calendar</h4>
+                <h4>📋 Tasks & Calendar</h4>
                 <ul>
                     <li>"Hey Manny create task to follow up with prospects"</li>
                     <li>"Hey Manny schedule 30-minute meeting with new lead tomorrow"</li>
-                    <li>"Hey Manny show my HubSpot meetings for this week"</li>
+                    <li>"Hey Manny show my meetings for this week"</li>
                 </ul>
             </div>
             <div class="capability-section">
@@ -2100,13 +1613,13 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny show my calendar today" or "Hey Manny create calendar event meeting tomorrow"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny create contact John Smith" or "Hey Manny text 555-1234 saying hello"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email, Google Calendar & HubSpot CRM | Auto-adds "Hey Manny" if missing</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey Manny" if missing</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. Google Calendar & HubSpot data are securely handled via encrypted APIs.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. HubSpot CRM data is securely handled via encrypted APIs.</div>
     </div>
 
     <script>
@@ -2198,9 +1711,7 @@ def get_html_template():
                                                 commandLower.includes('message') || commandLower.includes('email') ||
                                                 commandLower.includes('create') || commandLower.includes('add') ||
                                                 commandLower.includes('schedule') || commandLower.includes('show') ||
-                                                commandLower.includes('update') || commandLower.includes('calendar') ||
-                                                commandLower.includes('meeting') || commandLower.includes('event') ||
-                                                commandLower.includes('available') || commandLower.includes('free');
+                                                commandLower.includes('update');
                             
                             const justWakeWord = wakeWords.some(wake => commandLower.trim() === wake.toLowerCase());
                             
@@ -2282,7 +1793,7 @@ def get_html_template():
                     }}
                 }};
 
-                browserSupport.textContent = 'Enhanced voice recognition with Google Calendar & HubSpot CRM support ✅';
+                browserSupport.textContent = 'Enhanced voice recognition with HubSpot CRM support ✅';
                 browserSupport.className = 'browser-support';
                 return true;
             }} else {{
@@ -2357,7 +1868,7 @@ def get_html_template():
             response.className = 'response ' + type;
             response.style.display = 'block';
             if (type === 'success') {{
-                setTimeout(() => {{ response.style.display = 'none'; }}, 15000);
+                setTimeout(() => {{ response.style.display = 'none'; }}, 10000);
             }}
         }}
 
@@ -2538,56 +2049,6 @@ def execute():
     except Exception as e:
         return jsonify({"response": f"Error: {str(e)}"}), 500
 
-@app.route('/oauth/callback')
-def oauth_callback():
-    """Handle OAuth callback from Google"""
-    code = request.args.get('code')
-    state = request.args.get('state')
-    error = request.args.get('error')
-    
-    if error:
-        return f"<h1>OAuth Error</h1><p>Error: {error}</p><p><a href='/'>Return to Manny</a></p>"
-    
-    if not code:
-        return "<h1>OAuth Error</h1><p>No authorization code received</p><p><a href='/'>Return to Manny</a></p>"
-    
-    # Exchange code for credentials
-    credentials = google_calendar_service.exchange_code_for_credentials(code, state)
-    
-    if credentials:
-        return '''
-        <html>
-        <head><title>Google Calendar Authorization Successful</title></head>
-        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #4a69bd;">✅ Google Calendar Connected!</h1>
-            <p>Your Google Calendar is now connected to Manny!</p>
-            <p>You can now use voice commands like:</p>
-            <ul style="text-align: left; display: inline-block; margin: 20px;">
-                <li>"Hey Manny create calendar event Team Meeting tomorrow at 2pm"</li>
-                <li>"Hey Manny show my calendar for today"</li>
-                <li>"Hey Manny am I free Friday at 3pm"</li>
-            </ul>
-            <p><a href="/" style="background: #4a69bd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Return to Manny</a></p>
-            <script>
-                setTimeout(function() {
-                    window.close();
-                }, 3000);
-            </script>
-        </body>
-        </html>
-        '''
-    else:
-        return '''
-        <html>
-        <head><title>Google Calendar Authorization Failed</title></head>
-        <body style="font-family: Arial, sans-serif; text-align: center; padding: 50px;">
-            <h1 style="color: #e74c3c;">❌ Authorization Failed</h1>
-            <p>There was an error connecting your Google Calendar.</p>
-            <p><a href="/" style="background: #4a69bd; color: white; padding: 10px 20px; text-decoration: none; border-radius: 5px;">Return to Manny</a></p>
-        </body>
-        </html>
-        '''
-
 @app.route('/test-email', methods=['POST'])
 def test_email():
     """Test email configuration"""
@@ -2627,7 +2088,6 @@ def health_check():
             "twilio_configured": bool(twilio_client.client),
             "email_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
             "hubspot_configured": bool(CONFIG["hubspot_api_token"]),
-            "google_calendar_configured": bool(google_calendar_service.enabled),
             "claude_configured": bool(CONFIG["claude_api_key"])
         },
         "email_config": {
@@ -2635,16 +2095,9 @@ def health_check():
             "smtp_server": CONFIG["email_smtp_server"],
             "smtp_port": CONFIG["email_smtp_port"]
         },
-        "integrations": {
-            "hubspot_crm": {
-                "provider": "HubSpot",
-                "api_configured": bool(CONFIG["hubspot_api_token"])
-            },
-            "google_calendar": {
-                "provider": "Google Calendar",
-                "api_configured": bool(CONFIG["google_calendar_enabled"] and CONFIG["google_calendar_credentials"]),
-                "oauth_flow": "OAuth 2.0"
-            }
+        "crm_integration": {
+            "provider": "HubSpot",
+            "api_configured": bool(CONFIG["hubspot_api_token"])
         }
     })
 
@@ -2665,13 +2118,6 @@ def crm_health_check():
                 "create_opportunity", "show_pipeline_summary"
             ]
         },
-        "calendar_integration": {
-            "google_calendar_configured": bool(google_calendar_service.enabled),
-            "google_calendar_authenticated": google_calendar_service.is_authenticated() if google_calendar_service.enabled else False,
-            "supported_calendar_actions": [
-                "create_calendar_event", "show_google_calendar", "check_availability"
-            ]
-        },
         "communication": {
             "sms_enabled": bool(twilio_client.client),
             "email_enabled": bool(CONFIG["email_address"] and CONFIG["email_password"])
@@ -2679,7 +2125,7 @@ def crm_health_check():
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting Manny AI Assistant with Google Calendar & HubSpot CRM Integration")
+    print("🚀 Starting Manny AI Assistant with HubSpot CRM Integration")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     
@@ -2691,19 +2137,14 @@ if __name__ == '__main__':
     if CONFIG['hubspot_api_token']:
         print(f"   └─ Token: {CONFIG['hubspot_api_token'][:12]}...")
     
-    calendar_status = "✅ Ready" if google_calendar_service.enabled else "⚠️ Not configured"
-    print(f"📅 Google Calendar: {calendar_status}")
-    if google_calendar_service.enabled:
-        print(f"   └─ OAuth 2.0 flow configured")
-    
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
     print("\n🎯 Supported Voice Commands:")
-    print("   📅 Calendar: 'Hey Manny create calendar event meeting tomorrow at 2pm'")
     print("   📱 SMS: 'Hey Manny text John saying hello'")
     print("   📧 Email: 'Hey Manny email client@company.com saying proposal ready'")
     print("   👥 Contacts: 'Hey Manny create contact John Smith email john@test.com'")
     print("   📋 Tasks: 'Hey Manny create task to follow up with prospects'")
+    print("   📅 Calendar: 'Hey Manny schedule meeting with new lead tomorrow'")
     print("   📊 Pipeline: 'Hey Manny show me this month's sales pipeline status'")
     
     port = int(os.environ.get("PORT", 10000))

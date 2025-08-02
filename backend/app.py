@@ -88,7 +88,7 @@ class TwilioClient:
             return {"error": f"Failed to send SMS: {str(e)}"}
 
 class EmailService:
-    """SMTP Email service with provider support"""
+    """SMTP Email service with provider support - FIXED VERSION"""
     
     def __init__(self, smtp_server: str, smtp_port: int, email_address: str, 
                  email_password: str, email_name: str, email_provider: str):
@@ -98,22 +98,21 @@ class EmailService:
         print(f"   email_address: {email_address}")
         print(f"   email_provider: {email_provider}")
         
-        self.smtp_server = smtp_server
-        self.smtp_port = smtp_port
         self.email_address = email_address
         self.email_password = email_password
         self.email_name = email_name
         self.email_provider = email_provider.lower()
         
-        print(f"🔍 DEBUG - Before _configure_provider_defaults:")
-        print(f"   self.smtp_server: {self.smtp_server}")
-        print(f"   self.smtp_port: {self.smtp_port}")
-        
-        self._configure_provider_defaults()
-        
-        print(f"🔍 DEBUG - After _configure_provider_defaults:")
-        print(f"   self.smtp_server: {self.smtp_server}")
-        print(f"   self.smtp_port: {self.smtp_port}")
+        # FIXED: Only use environment variables if they're explicitly set
+        # Don't override with provider defaults if env vars are already configured
+        if smtp_server and smtp_server.strip():
+            self.smtp_server = smtp_server
+            self.smtp_port = smtp_port
+            print(f"🔍 DEBUG - Using explicit SMTP config: {self.smtp_server}:{self.smtp_port}")
+        else:
+            # Only fall back to provider defaults if no explicit config
+            self._configure_provider_defaults()
+            print(f"🔍 DEBUG - Using provider defaults: {self.smtp_server}:{self.smtp_port}")
         
         if email_address and email_password:
             print(f"✅ Email client configured for {self.email_provider.title()}")
@@ -122,7 +121,7 @@ class EmailService:
             print("⚠️ Email not configured - missing credentials")
     
     def _configure_provider_defaults(self):
-        """Configure default settings based on email provider"""
+        """Configure default settings based on email provider - ONLY when no explicit config"""
         provider_configs = {
             "networksolutions": {"server": "netsol-smtp-oxcs.hostingplatform.com", "port": 587},
             "gmail": {"server": "smtp.gmail.com", "port": 587},
@@ -133,10 +132,12 @@ class EmailService:
         
         if self.email_provider in provider_configs:
             config = provider_configs[self.email_provider]
-            # Only use defaults if not explicitly configured
-            if self.smtp_server in ["smtp.gmail.com", "netsol-smtp-oxcs.hostingplatform.com"] or not self.smtp_server:
-                self.smtp_server = config["server"]
-                self.smtp_port = config["port"]
+            self.smtp_server = config["server"]
+            self.smtp_port = config["port"]
+        else:
+            # Default fallback
+            self.smtp_server = "smtp.gmail.com"
+            self.smtp_port = 587
     
     def send_email(self, to: str, subject: str, message: str, is_html: bool = False) -> Dict[str, Any]:
         """Send email via SMTP"""
@@ -188,6 +189,7 @@ class EmailService:
             return {"success": False, "error": "Email credentials not configured"}
         
         try:
+            print(f"🔍 DEBUG - Testing connection to: {self.smtp_server}:{self.smtp_port}")
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
                 server.starttls()
                 server.login(self.email_address, self.email_password)
@@ -198,7 +200,7 @@ class EmailService:
             return {"success": False, "error": f"Email connection failed: {str(e)}"}
 
 class EmailClient:
-    """Wrapper for EmailService to maintain compatibility"""
+    """Wrapper for EmailService to maintain compatibility - CLEANED UP VERSION"""
     
     def __init__(self):
         self.email_service = EmailService(
@@ -213,40 +215,6 @@ class EmailClient:
     def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
-    
-    def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
-        """Send email via SMTP"""
-        if not self.email_address or not self.email_password:
-            return {"error": "Email not configured"}
-        
-        try:
-            # Create message
-            msg = MIMEMultipart()
-            msg['From'] = self.email_address
-            msg['To'] = to
-            msg['Subject'] = subject
-            
-            # Add body to email
-            msg.attach(MIMEText(message, 'plain'))
-            
-            # Create SMTP session
-            server = smtplib.SMTP(self.smtp_server, self.smtp_port)
-            server.starttls()  # Enable security
-            server.login(self.email_address, self.email_password)
-            text = msg.as_string()
-            server.sendmail(self.email_address, to, text)
-            server.quit()
-            
-            return {
-                "success": True,
-                "to": to,
-                "from": self.email_address,
-                "subject": subject,
-                "body": message
-            }
-            
-        except Exception as e:
-            return {"error": f"Failed to send email: {str(e)}"}
 
 class WakeWordProcessor:
     """Simple wake word detection"""
@@ -420,7 +388,7 @@ def fix_email_addresses(text: str) -> str:
     return fixed_text
 
 def extract_email_command(text: str) -> Dict[str, Any]:
-    """Extract email command from text and convert to SMS notification"""
+    """Extract email command from text"""
     # Fix email addresses first
     original_text = text
     fixed_text = fix_email_addresses(text)
@@ -453,10 +421,10 @@ def extract_email_command(text: str) -> Dict[str, Any]:
             message = message.replace(" period", ".").replace(" comma", ",")
             subject = subject.replace(" period", ".").replace(" comma", ",")
             
-            # Convert to SMS notification instead of email
+            # Return email action (FIXED - was incorrectly returning send_email_as_sms)
             return {
-                "action": "send_email_as_sms",
-                "email_recipient": recipient,
+                "action": "send_email",
+                "recipient": recipient,
                 "subject": subject,
                 "message": message
             }

@@ -41,8 +41,8 @@ CONFIG = {
     "ghl_api_key": os.getenv("GHL_API_KEY", ""),
     "ghl_location_id": os.getenv("GHL_LOCATION_ID", ""),
     # Wake word configuration
-    "wake_words": "hey ai co-pilot,ai co-pilot,hey copilot,copilot,hey ai copilot,ai copilot,hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly".split(","),
-    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ai co-pilot"),
+    "wake_words": "hey lina,lina,hey leena,leena,hey lena,lena,hey lynn,lynn,hey ai co-pilot,ai co-pilot,hey copilot,copilot,hey ai copilot,ai copilot".split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey lina"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }
 
@@ -1361,7 +1361,7 @@ def get_html_template():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Co-pilot - Voice Assistant with CRM</title>
+    <title>Lina - Voice Assistant with CRM</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
@@ -1417,40 +1417,40 @@ def get_html_template():
 <body>
     <div class="container">
         <div class="header">
-            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="AI Co-pilot Logo" />
+            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Lina AI Assistant Logo" />
             <p>Voice-powered business automation with CRM integration!</p>
         </div>
         
         <div class="capabilities">
-            <h3>🚀 AI Co-pilot Capabilities</h3>
+            <h3>🚀 Lina Capabilities</h3>
             <div class="capability-section">
                 <h4>📱 Communication</h4>
                 <ul>
-                    <li>"Hey AI Co-pilot text John saying meeting at 3pm"</li>
-                    <li>"Hey AI Co-pilot email client@company.com saying proposal attached"</li>
+                    <li>"Hey Lina text John saying meeting at 3pm"</li>
+                    <li>"Hey Lina email client@company.com saying proposal attached"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>👥 CRM Contacts</h4>
                 <ul>
-                    <li>"Hey AI Co-pilot create contact John Smith email john@test.com"</li>
-                    <li>"Hey AI Co-pilot add note to client ABC saying discussed pricing"</li>
-                    <li>"Hey AI Co-pilot show me Sarah's contact details"</li>
+                    <li>"Hey Lina create contact John Smith email john@test.com"</li>
+                    <li>"Hey Lina add note to client ABC saying discussed pricing"</li>
+                    <li>"Hey Lina show me Sarah's contact details"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📋 Tasks & Calendar</h4>
                 <ul>
-                    <li>"Hey AI Co-pilot create task to follow up with prospects"</li>
-                    <li>"Hey AI Co-pilot schedule 30-minute meeting with new lead tomorrow"</li>
-                    <li>"Hey AI Co-pilot show my meetings for this week"</li>
+                    <li>"Hey Lina create task to follow up with prospects"</li>
+                    <li>"Hey Lina schedule 30-minute meeting with new lead tomorrow"</li>
+                    <li>"Hey Lina show my meetings for this week"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📊 Sales Pipeline</h4>
                 <ul>
-                    <li>"Hey AI Co-pilot create opportunity for XYZ Company worth $25,000"</li>
-                    <li>"Hey AI Co-pilot show me this month's sales pipeline status"</li>
+                    <li>"Hey Lina create opportunity for XYZ Company worth $25,000"</li>
+                    <li>"Hey Lina show me this month's sales pipeline status"</li>
                 </ul>
             </div>
         </div>
@@ -1471,10 +1471,10 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey AI Co-pilot create contact John Smith" or "Hey AI Co-pilot text 555-1234 saying hello"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Lina create contact John Smith" or "Hey Lina text 555-1234 saying hello"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & CRM operations | Auto-adds "Hey AI Co-pilot" if missing</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & CRM operations | Auto-adds "Hey Lina" if missing</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
         <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. CRM data is securely handled via encrypted APIs.</div>
@@ -1502,16 +1502,12 @@ def get_html_template():
         const response = document.getElementById('response');
         const browserSupport = document.getElementById('browserSupport');
 
-        // Enhanced wake word variations for AI Co-pilot
+        // Enhanced wake word variations for Lina
         const wakeWords = [
+            'hey lina', 'lina', 'hey leena', 'leena',
+            'hey lena', 'lena', 'hey lynn', 'lynn',
             'hey ai co-pilot', 'hey ai copilot', 'ai co-pilot', 'ai copilot',
-            'hey copilot', 'copilot',
-            'hey ringly', 'hey ring', 'ringly', 
-            'hey wrinkly', 'wrinkly', 'hey wrinkle',
-            'hey wrigley', 'wrigley', 
-            'hey ringley', 'ringley',
-            'hey ringling', 'ringling',
-            'hey wrigly', 'wrigly'
+            'hey copilot', 'copilot'
         ];
 
         function checkForWakeWordInBuffer(buffer) {{
@@ -1539,7 +1535,7 @@ def get_html_template():
                     retryCount = 0;
                     lastError = null;
                     shouldStop = false;
-                    updateUI('listening', '🎤 Listening for "Hey AI Co-pilot"...', '👂');
+                    updateUI('listening', '🎤 Listening for "Hey Lina"...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -1989,7 +1985,7 @@ def crm_health_check():
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting AI Co-pilot with GoHighLevel CRM Integration")
+    print("🚀 Starting Lina AI Assistant with GoHighLevel CRM Integration")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     
@@ -2004,14 +2000,15 @@ if __name__ == '__main__':
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
     print("\n🎯 Supported Voice Commands:")
-    print("   📱 SMS: 'Hey AI Co-pilot text John saying hello'")
-    print("   📧 Email: 'Hey AI Co-pilot email client@company.com saying proposal ready'")
-    print("   👥 Contacts: 'Hey AI Co-pilot create contact John Smith email john@test.com'")
-    print("   📋 Tasks: 'Hey AI Co-pilot create task to follow up with prospects'")
-    print("   📅 Calendar: 'Hey AI Co-pilot schedule meeting with new lead tomorrow'")
-    print("   📊 Pipeline: 'Hey AI Co-pilot show me this month's sales pipeline status'")
+    print("   📱 SMS: 'Hey Lina text John saying hello'")
+    print("   📧 Email: 'Hey Lina email client@company.com saying proposal ready'")
+    print("   👥 Contacts: 'Hey Lina create contact John Smith email john@test.com'")
+    print("   📋 Tasks: 'Hey Lina create task to follow up with prospects'")
+    print("   📅 Calendar: 'Hey Lina schedule meeting with new lead tomorrow'")
+    print("   📊 Pipeline: 'Hey Lina show me this month's sales pipeline status'")
     
     port = int(os.environ.get("PORT", 10000))
     print(f"\n🚀 Starting on port {port}")
     
     app.run(host="0.0.0.0", port=port, debug=False)
+    

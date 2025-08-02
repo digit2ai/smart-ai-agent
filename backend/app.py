@@ -1,4 +1,4 @@
-# Enhanced Flask Wake Word App - SMS, Email & CRM with GoHighLevel Integration
+# Enhanced Flask Wake Word App - SMS, Email & CRM with HubSpot Integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -37,81 +37,85 @@ CONFIG = {
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
     "email_name": os.getenv("EMAIL_NAME", "Voice Command System"),
-    # GoHighLevel CRM configuration
-    "ghl_api_key": os.getenv("GHL_API_KEY", ""),
-    "ghl_location_id": os.getenv("GHL_LOCATION_ID", ""),
-    # Wake word configuration
-    "wake_words": "hey lina,lina,hey leena,leena,hey lena,lena,hey lynn,lynn,hey ai co-pilot,ai co-pilot,hey copilot,copilot,hey ai copilot,ai copilot".split(","),
-    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey lina"),
+    # HubSpot CRM configuration
+    "hubspot_api_token": os.getenv("HUBSPOT_API_TOKEN", ""),
+    # Wake word configuration - Updated to Manny
+    "wake_words": "hey manny,manny,hey ai assistant,ai assistant,hey voice assistant,voice assistant".split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey manny"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }
 
 print(f"🎙️ Wake words: {CONFIG['wake_words']}")
 print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
 
-# ==================== GOHIGHLEVEL CRM SERVICE ====================
+# ==================== HUBSPOT CRM SERVICE ====================
 
-class GoHighLevelService:
-    """GoHighLevel CRM API service for voice command integration"""
+class HubSpotService:
+    """HubSpot CRM API service for voice command integration using v3 API"""
     
     def __init__(self):
-        self.api_key = CONFIG["ghl_api_key"]
-        self.location_id = CONFIG["ghl_location_id"]
-        self.base_url = "https://services.leadconnectorhq.com"
+        self.api_token = CONFIG["hubspot_api_token"]
+        self.base_url = "https://api.hubapi.com"
         self.headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json",
-            "Version": "2021-07-28"
+            "Authorization": f"Bearer {self.api_token}",
+            "Content-Type": "application/json"
         }
         
-        if self.api_key and self.location_id:
-            print("✅ GoHighLevel service initialized")
-            print(f"📍 Location ID: {self.location_id}")
+        if self.api_token:
+            print("✅ HubSpot service initialized")
+            print(f"🔑 Token: {self.api_token[:12]}...")
         else:
-            print("⚠️ GoHighLevel not configured - missing API_KEY or LOCATION_ID")
+            print("⚠️ HubSpot not configured - missing HUBSPOT_API_TOKEN")
     
     def test_connection(self) -> Dict[str, Any]:
-        """Test GoHighLevel API connection"""
-        if not self.api_key or not self.location_id:
-            return {"success": False, "error": "GoHighLevel credentials not configured"}
+        """Test HubSpot API connection"""
+        if not self.api_token:
+            return {"success": False, "error": "HubSpot API token not configured"}
         
         try:
-            response = requests.get(
-                f"{self.base_url}/locations/{self.location_id}",
+            # Test with a simple contacts search
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/contacts/search",
                 headers=self.headers,
+                json={
+                    "filterGroups": [],
+                    "properties": ["email", "firstname", "lastname"],
+                    "limit": 1
+                },
                 timeout=10
             )
             
-            if response.status_code == 200:
-                return {"success": True, "message": "GoHighLevel connection successful"}
+            if response.status_code in [200, 201]:
+                return {"success": True, "message": "HubSpot connection successful"}
             else:
-                return {"success": False, "error": f"API returned status {response.status_code}"}
+                return {"success": False, "error": f"API returned status {response.status_code}: {response.text}"}
                 
         except Exception as e:
             return {"success": False, "error": f"Connection failed: {str(e)}"}
     
     def create_contact(self, name: str, email: str = "", phone: str = "", company: str = "") -> Dict[str, Any]:
-        """Create new contact in GoHighLevel"""
+        """Create new contact in HubSpot"""
         try:
             name_parts = name.strip().split()
-            first_name = name_parts[0] if name_parts else ""
-            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+            firstname = name_parts[0] if name_parts else ""
+            lastname = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
             
-            contact_data = {
-                "firstName": first_name,
-                "lastName": last_name,
-                "locationId": self.location_id
+            properties = {
+                "firstname": firstname,
+                "lastname": lastname
             }
             
             if email:
-                contact_data["email"] = email
+                properties["email"] = email
             if phone:
-                contact_data["phone"] = phone
+                properties["phone"] = phone
             if company:
-                contact_data["companyName"] = company
+                properties["company"] = company
+            
+            contact_data = {"properties": properties}
             
             response = requests.post(
-                f"{self.base_url}/contacts/",
+                f"{self.base_url}/crm/v3/objects/contacts",
                 headers=self.headers,
                 json=contact_data,
                 timeout=10
@@ -122,7 +126,7 @@ class GoHighLevelService:
                 return {
                     "success": True,
                     "message": f"Contact created: {name}",
-                    "contact_id": contact.get("contact", {}).get("id"),
+                    "contact_id": contact.get("id"),
                     "data": contact
                 }
             else:
@@ -134,18 +138,23 @@ class GoHighLevelService:
     def search_contact(self, query: str) -> Dict[str, Any]:
         """Search for contacts by name, email, or phone"""
         try:
-            search_params = {"locationId": self.location_id, "query": query}
+            # Use the search API with query parameter for general search
+            search_data = {
+                "query": query,
+                "properties": ["email", "firstname", "lastname", "phone", "company"],
+                "limit": 10
+            }
             
-            response = requests.get(
-                f"{self.base_url}/contacts/search",
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/contacts/search",
                 headers=self.headers,
-                params=search_params,
+                json=search_data,
                 timeout=10
             )
             
             if response.status_code == 200:
                 results = response.json()
-                contacts = results.get("contacts", [])
+                contacts = results.get("results", [])
                 
                 if contacts:
                     return {
@@ -164,10 +173,12 @@ class GoHighLevelService:
     def update_contact(self, contact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
         """Update contact information"""
         try:
-            response = requests.put(
-                f"{self.base_url}/contacts/{contact_id}",
+            update_data = {"properties": updates}
+            
+            response = requests.patch(
+                f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
                 headers=self.headers,
-                json=updates,
+                json=update_data,
                 timeout=10
             )
             
@@ -184,16 +195,23 @@ class GoHighLevelService:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
     
     def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
-        """Add note to contact"""
+        """Add note to contact using HubSpot Notes API"""
         try:
             note_data = {
-                "body": note,
-                "contactId": contact_id,
-                "userId": self.location_id
+                "properties": {
+                    "hs_note_body": note,
+                    "hs_timestamp": datetime.now().isoformat()
+                },
+                "associations": [
+                    {
+                        "to": {"id": contact_id},
+                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}]
+                    }
+                ]
             }
             
             response = requests.post(
-                f"{self.base_url}/contacts/{contact_id}/notes",
+                f"{self.base_url}/crm/v3/objects/notes",
                 headers=self.headers,
                 json=note_data,
                 timeout=10
@@ -212,22 +230,34 @@ class GoHighLevelService:
             return {"success": False, "error": f"Error adding note: {str(e)}"}
     
     def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
-        """Create new task"""
+        """Create new task in HubSpot"""
         try:
-            task_data = {
-                "title": title,
-                "body": description,
-                "locationId": self.location_id
+            task_properties = {
+                "hs_task_subject": title,
+                "hs_task_body": description or title,
+                "hs_task_status": "NOT_STARTED",
+                "hs_task_priority": "MEDIUM"
             }
             
-            if contact_id:
-                task_data["contactId"] = contact_id
-            
             if due_date:
-                task_data["dueDate"] = self._parse_date(due_date)
+                parsed_date = self._parse_date(due_date)
+                # Convert to timestamp in milliseconds
+                due_timestamp = int(datetime.strptime(parsed_date, "%Y-%m-%d").timestamp() * 1000)
+                task_properties["hs_timestamp"] = str(due_timestamp)
+            
+            task_data = {"properties": task_properties}
+            
+            # Add association to contact if provided
+            if contact_id:
+                task_data["associations"] = [
+                    {
+                        "to": {"id": contact_id},
+                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 204}]
+                    }
+                ]
             
             response = requests.post(
-                f"{self.base_url}/tasks/",
+                f"{self.base_url}/crm/v3/objects/tasks",
                 headers=self.headers,
                 json=task_data,
                 timeout=10
@@ -246,132 +276,190 @@ class GoHighLevelService:
             return {"success": False, "error": f"Error creating task: {str(e)}"}
     
     def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
-        """Create calendar appointment"""
+        """Create calendar appointment/meeting in HubSpot"""
         try:
             start_datetime = self._parse_datetime(start_time) if start_time else datetime.now() + timedelta(hours=1)
             end_datetime = start_datetime + timedelta(minutes=duration)
             
-            appointment_data = {
-                "title": title,
-                "startTime": start_datetime.isoformat(),
-                "endTime": end_datetime.isoformat(),
-                "locationId": self.location_id
+            # Convert to timestamp in milliseconds
+            start_timestamp = int(start_datetime.timestamp() * 1000)
+            end_timestamp = int(end_datetime.timestamp() * 1000)
+            
+            meeting_properties = {
+                "hs_meeting_title": title,
+                "hs_meeting_body": f"Meeting scheduled via Manny Voice Assistant",
+                "hs_timestamp": str(start_timestamp),
+                "hs_meeting_start_time": str(start_timestamp),
+                "hs_meeting_end_time": str(end_timestamp)
             }
             
+            meeting_data = {"properties": meeting_properties}
+            
+            # Add association to contact if provided
             if contact_id:
-                appointment_data["contactId"] = contact_id
+                meeting_data["associations"] = [
+                    {
+                        "to": {"id": contact_id},
+                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 199}]
+                    }
+                ]
             
             response = requests.post(
-                f"{self.base_url}/calendars/events",
+                f"{self.base_url}/crm/v3/objects/meetings",
                 headers=self.headers,
-                json=appointment_data,
+                json=meeting_data,
                 timeout=10
             )
             
             if response.status_code in [200, 201]:
                 return {
                     "success": True,
-                    "message": f"Appointment scheduled: {title}",
+                    "message": f"Meeting scheduled: {title}",
                     "data": response.json()
                 }
             else:
-                return {"success": False, "error": f"Failed to create appointment: {response.text}"}
+                return {"success": False, "error": f"Failed to create meeting: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error creating appointment: {str(e)}"}
+            return {"success": False, "error": f"Error creating meeting: {str(e)}"}
     
     def get_calendar_events(self, start_date: str = "", end_date: str = "") -> Dict[str, Any]:
-        """Get calendar events for date range"""
+        """Get calendar events (meetings) for date range"""
         try:
-            params = {"locationId": self.location_id}
-            
+            # Parse dates or use defaults
             if start_date:
-                params["startDate"] = self._parse_date(start_date)
+                start_dt = datetime.strptime(self._parse_date(start_date), "%Y-%m-%d")
             else:
-                params["startDate"] = datetime.now().strftime("%Y-%m-%d")
+                start_dt = datetime.now()
             
             if end_date:
-                params["endDate"] = self._parse_date(end_date)
+                end_dt = datetime.strptime(self._parse_date(end_date), "%Y-%m-%d")
             else:
-                params["endDate"] = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+                end_dt = start_dt + timedelta(days=7)
             
-            response = requests.get(
-                f"{self.base_url}/calendars/events",
+            # Convert to timestamps in milliseconds
+            start_timestamp = int(start_dt.timestamp() * 1000)
+            end_timestamp = int(end_dt.timestamp() * 1000)
+            
+            # Search for meetings in the date range
+            search_data = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "hs_meeting_start_time",
+                                "operator": "BETWEEN",
+                                "value": start_timestamp,
+                                "highValue": end_timestamp
+                            }
+                        ]
+                    }
+                ],
+                "properties": ["hs_meeting_title", "hs_meeting_body", "hs_meeting_start_time", "hs_meeting_end_time"],
+                "limit": 50
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/meetings/search",
                 headers=self.headers,
-                params=params,
+                json=search_data,
                 timeout=10
             )
             
             if response.status_code == 200:
-                events = response.json()
+                results = response.json()
+                meetings = results.get("results", [])
                 return {
                     "success": True,
-                    "message": f"Retrieved {len(events.get('events', []))} events",
-                    "events": events.get("events", [])
+                    "message": f"Retrieved {len(meetings)} meeting(s)",
+                    "events": meetings
                 }
             else:
-                return {"success": False, "error": f"Failed to get events: {response.text}"}
+                return {"success": False, "error": f"Failed to get meetings: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error getting events: {str(e)}"}
+            return {"success": False, "error": f"Error getting meetings: {str(e)}"}
     
     def create_opportunity(self, name: str, contact_id: str = "", value: float = 0) -> Dict[str, Any]:
-        """Create new opportunity in sales pipeline"""
+        """Create new deal/opportunity in HubSpot sales pipeline"""
         try:
-            opportunity_data = {
-                "name": name,
-                "locationId": self.location_id
+            deal_properties = {
+                "dealname": name,
+                "dealstage": "appointmentscheduled",  # Default stage
+                "pipeline": "default"  # Default pipeline
             }
             
-            if contact_id:
-                opportunity_data["contactId"] = contact_id
-            
             if value > 0:
-                opportunity_data["monetaryValue"] = value
+                deal_properties["amount"] = str(value)
+            
+            deal_data = {"properties": deal_properties}
+            
+            # Add association to contact if provided
+            if contact_id:
+                deal_data["associations"] = [
+                    {
+                        "to": {"id": contact_id},
+                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 3}]
+                    }
+                ]
             
             response = requests.post(
-                f"{self.base_url}/opportunities/",
+                f"{self.base_url}/crm/v3/objects/deals",
                 headers=self.headers,
-                json=opportunity_data,
+                json=deal_data,
                 timeout=10
             )
             
             if response.status_code in [200, 201]:
                 return {
                     "success": True,
-                    "message": f"Opportunity created: {name}",
+                    "message": f"Deal created: {name}",
                     "data": response.json()
                 }
             else:
-                return {"success": False, "error": f"Failed to create opportunity: {response.text}"}
+                return {"success": False, "error": f"Failed to create deal: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error creating opportunity: {str(e)}"}
+            return {"success": False, "error": f"Error creating deal: {str(e)}"}
     
     def get_pipeline_summary(self) -> Dict[str, Any]:
-        """Get pipeline summary and statistics"""
+        """Get deals pipeline summary and statistics"""
         try:
-            params = {"locationId": self.location_id}
+            # Search for all deals
+            search_data = {
+                "filterGroups": [],
+                "properties": ["dealname", "amount", "dealstage", "pipeline", "closedate"],
+                "limit": 100
+            }
             
-            response = requests.get(
-                f"{self.base_url}/opportunities/",
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals/search",
                 headers=self.headers,
-                params=params,
+                json=search_data,
                 timeout=10
             )
             
             if response.status_code == 200:
-                opportunities = response.json()
+                results = response.json()
+                deals = results.get("results", [])
                 
-                total_value = sum(opp.get("monetaryValue", 0) for opp in opportunities.get("opportunities", []))
-                total_count = len(opportunities.get("opportunities", []))
+                total_value = 0
+                total_count = len(deals)
+                
+                for deal in deals:
+                    amount = deal.get("properties", {}).get("amount")
+                    if amount:
+                        try:
+                            total_value += float(amount)
+                        except (ValueError, TypeError):
+                            pass
                 
                 return {
                     "success": True,
-                    "message": f"Pipeline has {total_count} opportunities worth ${total_value:,.2f}",
+                    "message": f"Pipeline has {total_count} deals worth ${total_value:,.2f}",
                     "total_value": total_value,
                     "total_count": total_count,
-                    "opportunities": opportunities.get("opportunities", [])
+                    "deals": deals
                 }
             else:
                 return {"success": False, "error": f"Failed to get pipeline data: {response.text}"}
@@ -866,7 +954,7 @@ class WakeWordProcessor:
 # Initialize services
 twilio_client = TwilioClient()
 email_client = EmailClient()
-ghl_service = GoHighLevelService()
+hubspot_service = HubSpotService()  # Changed from ghl_service
 wake_word_processor = WakeWordProcessor()
 
 # ==================== EXISTING HELPER FUNCTIONS ====================
@@ -1063,10 +1151,10 @@ def handle_send_email(data):
     else:
         return f"❌ Invalid email address: {recipient}"
 
-# ==================== CRM ACTION HANDLERS ====================
+# ==================== CRM ACTION HANDLERS (UPDATED FOR HUBSPOT) ====================
 
 def handle_create_contact(data):
-    """Handle creating new contact in GoHighLevel"""
+    """Handle creating new contact in HubSpot"""
     name = data.get("name", "")
     email = data.get("email", "")
     phone = data.get("phone", "")
@@ -1075,7 +1163,7 @@ def handle_create_contact(data):
     if not name:
         return "❌ Contact name is required"
     
-    result = ghl_service.create_contact(name, email, phone, company)
+    result = hubspot_service.create_contact(name, email, phone, company)
     
     if result.get("success"):
         response = f"✅ Contact created: {name}"
@@ -1097,7 +1185,7 @@ def handle_update_contact_phone(data):
     if not name or not phone:
         return "❌ Both contact name and phone number are required"
     
-    search_result = ghl_service.search_contact(name)
+    search_result = hubspot_service.search_contact(name)
     
     if not search_result.get("success"):
         return f"❌ Could not find contact: {name}"
@@ -1109,7 +1197,7 @@ def handle_update_contact_phone(data):
     contact = contacts[0]
     contact_id = contact.get("id")
     
-    update_result = ghl_service.update_contact(contact_id, {"phone": phone})
+    update_result = hubspot_service.update_contact(contact_id, {"phone": phone})
     
     if update_result.get("success"):
         return f"✅ Updated {name}'s phone number to {phone}"
@@ -1124,7 +1212,7 @@ def handle_add_contact_note(data):
     if not name or not note:
         return "❌ Both contact name and note are required"
     
-    search_result = ghl_service.search_contact(name)
+    search_result = hubspot_service.search_contact(name)
     
     if not search_result.get("success"):
         return f"❌ Could not find contact: {name}"
@@ -1136,7 +1224,7 @@ def handle_add_contact_note(data):
     contact = contacts[0]
     contact_id = contact.get("id")
     
-    note_result = ghl_service.add_contact_note(contact_id, note)
+    note_result = hubspot_service.add_contact_note(contact_id, note)
     
     if note_result.get("success"):
         return f"✅ Added note to {name}: {note}"
@@ -1150,20 +1238,21 @@ def handle_search_contact(data):
     if not query:
         return "❌ Search query is required"
     
-    result = ghl_service.search_contact(query)
+    result = hubspot_service.search_contact(query)
     
     if result.get("success"):
         contacts = result.get("contacts", [])
         if contacts:
             response = f"✅ Found {len(contacts)} contact(s):\n\n"
             for i, contact in enumerate(contacts[:3], 1):
-                response += f"{i}. {contact.get('firstName', '')} {contact.get('lastName', '')}\n"
-                if contact.get("email"):
-                    response += f"   📧 {contact.get('email')}\n"
-                if contact.get("phone"):
-                    response += f"   📱 {contact.get('phone')}\n"
-                if contact.get("companyName"):
-                    response += f"   🏢 {contact.get('companyName')}\n"
+                props = contact.get('properties', {})
+                response += f"{i}. {props.get('firstname', '')} {props.get('lastname', '')}\n"
+                if props.get("email"):
+                    response += f"   📧 {props.get('email')}\n"
+                if props.get("phone"):
+                    response += f"   📱 {props.get('phone')}\n"
+                if props.get("company"):
+                    response += f"   🏢 {props.get('company')}\n"
                 response += "\n"
             return response.strip()
         else:
@@ -1182,13 +1271,13 @@ def handle_create_task(data):
     
     contact_id = ""
     if contact:
-        search_result = ghl_service.search_contact(contact)
+        search_result = hubspot_service.search_contact(contact)
         if search_result.get("success"):
             contacts = search_result.get("contacts", [])
             if contacts:
                 contact_id = contacts[0].get("id")
     
-    result = ghl_service.create_task(title, "", contact_id, due_date)
+    result = hubspot_service.create_task(title, "", contact_id, due_date)
     
     if result.get("success"):
         response = f"✅ Task created: {title}"
@@ -1210,14 +1299,14 @@ def handle_schedule_meeting(data):
         return "❌ Contact name is required for scheduling"
     
     contact_id = ""
-    search_result = ghl_service.search_contact(contact)
+    search_result = hubspot_service.search_contact(contact)
     if search_result.get("success"):
         contacts = search_result.get("contacts", [])
         if contacts:
             contact_id = contacts[0].get("id")
     
     title = f"Meeting with {contact}"
-    result = ghl_service.create_appointment(title, contact_id, when, duration)
+    result = hubspot_service.create_appointment(title, contact_id, when, duration)
     
     if result.get("success"):
         response = f"✅ {duration}-minute meeting scheduled with {contact}"
@@ -1243,16 +1332,23 @@ def handle_show_calendar(data):
         start_date = when
         end_date = ""
     
-    result = ghl_service.get_calendar_events(start_date, end_date)
+    result = hubspot_service.get_calendar_events(start_date, end_date)
     
     if result.get("success"):
         events = result.get("events", [])
         if events:
             response = f"✅ Calendar events for {when or 'this week'}:\n\n"
             for i, event in enumerate(events[:5], 1):
-                response += f"{i}. {event.get('title', 'Untitled')}\n"
-                if event.get("startTime"):
-                    response += f"   📅 {event.get('startTime')}\n"
+                props = event.get('properties', {})
+                response += f"{i}. {props.get('hs_meeting_title', 'Untitled')}\n"
+                if props.get("hs_meeting_start_time"):
+                    # Convert timestamp to readable date
+                    try:
+                        timestamp = int(props.get("hs_meeting_start_time")) / 1000
+                        start_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+                        response += f"   📅 {start_time}\n"
+                    except:
+                        response += f"   📅 {props.get('hs_meeting_start_time')}\n"
                 response += "\n"
             return response.strip()
         else:
@@ -1271,27 +1367,27 @@ def handle_create_opportunity(data):
     
     contact_id = ""
     if contact:
-        search_result = ghl_service.search_contact(contact)
+        search_result = hubspot_service.search_contact(contact)
         if search_result.get("success"):
             contacts = search_result.get("contacts", [])
             if contacts:
                 contact_id = contacts[0].get("id")
     
-    result = ghl_service.create_opportunity(name, contact_id, value)
+    result = hubspot_service.create_opportunity(name, contact_id, value)
     
     if result.get("success"):
-        response = f"✅ Opportunity created: {name}"
+        response = f"✅ Deal created: {name}"
         if value > 0:
             response += f"\n💰 Value: ${value:,.2f}"
         if contact:
             response += f"\n👤 Contact: {contact}"
         return response
     else:
-        return f"❌ Failed to create opportunity: {result.get('error')}"
+        return f"❌ Failed to create deal: {result.get('error')}"
 
 def handle_show_pipeline_summary(data):
     """Handle showing pipeline summary"""
-    result = ghl_service.get_pipeline_summary()
+    result = hubspot_service.get_pipeline_summary()
     
     if result.get("success"):
         total_value = result.get("total_value", 0)
@@ -1299,7 +1395,7 @@ def handle_show_pipeline_summary(data):
         
         response = f"📊 Sales Pipeline Summary:\n\n"
         response += f"💰 Total Value: ${total_value:,.2f}\n"
-        response += f"📈 Total Opportunities: {total_count}\n"
+        response += f"📈 Total Deals: {total_count}\n"
         
         if total_count > 0:
             avg_value = total_value / total_count
@@ -1352,7 +1448,7 @@ def dispatch_action(parsed):
         print(f"❌ Unknown action received: '{action}'")
         return f"Unknown action: {action}. Supported: SMS, Email, CRM Contact/Task/Calendar/Pipeline operations"
 
-# ==================== HTML TEMPLATE (Updated) ====================
+# ==================== HTML TEMPLATE (Updated for Manny) ====================
 
 def get_html_template():
     primary_wake_word = CONFIG['wake_word_primary']
@@ -1361,54 +1457,54 @@ def get_html_template():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Lina - Voice Assistant with CRM</title>
+    <title>Manny - Voice Assistant with HubSpot CRM</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
-        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
-        .container {{ background: rgba(255, 255, 255, 0.1); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; }}
-        .header h1 {{ font-size: 2.5em; margin-bottom: 10px; font-weight: 700; }}
-        .header img {{ max-height: 300px; margin-bottom: 20px; max-width: 95%; }}
-        .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; }}
+        body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
+        .container {{ background: rgba(26, 26, 46, 0.9); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; border: 2px solid #4a69bd; }}
+        .header h1 {{ font-size: 2.8em; margin-bottom: 10px; font-weight: 700; color: #4a69bd; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }}
+        .header img {{ max-height: 300px; margin-bottom: 20px; max-width: 95%; border-radius: 15px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }}
+        .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; color: #a0a0ff; }}
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
-        .voice-indicator {{ width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease; }}
-        .voice-indicator.listening {{ background: linear-gradient(45deg, #28a745, #20c997); animation: pulse 2s infinite; box-shadow: 0 0 30px rgba(40, 167, 69, 0.5); }}
-        .voice-indicator.wake-detected {{ background: linear-gradient(45deg, #ffc107, #e0a800); animation: glow 1s infinite alternate; box-shadow: 0 0 30px rgba(255, 193, 7, 0.7); }}
-        .voice-indicator.processing {{ background: linear-gradient(45deg, #dc3545, #c82333); animation: spin 1s linear infinite; box-shadow: 0 0 30px rgba(220, 53, 69, 0.5); }}
-        .voice-indicator.idle {{ background: rgba(255, 255, 255, 0.2); animation: none; }}
+        .voice-indicator {{ width: 100px; height: 100px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 15px; transition: all 0.3s ease; border: 3px solid transparent; }}
+        .voice-indicator.listening {{ background: linear-gradient(45deg, #4a69bd, #0097e6); animation: pulse 2s infinite; box-shadow: 0 0 30px rgba(74, 105, 189, 0.8); border-color: #4a69bd; }}
+        .voice-indicator.wake-detected {{ background: linear-gradient(45deg, #f39c12, #e67e22); animation: glow 1s infinite alternate; box-shadow: 0 0 30px rgba(243, 156, 18, 0.8); border-color: #f39c12; }}
+        .voice-indicator.processing {{ background: linear-gradient(45deg, #e74c3c, #c0392b); animation: spin 1s linear infinite; box-shadow: 0 0 30px rgba(231, 76, 60, 0.8); border-color: #e74c3c; }}
+        .voice-indicator.idle {{ background: rgba(74, 105, 189, 0.3); animation: none; border-color: #4a69bd; }}
         @keyframes pulse {{ 0% {{ transform: scale(1); opacity: 1; }} 50% {{ transform: scale(1.1); opacity: 0.8; }} 100% {{ transform: scale(1); opacity: 1; }} }}
-        @keyframes glow {{ 0% {{ box-shadow: 0 0 30px rgba(255, 193, 7, 0.7); }} 100% {{ box-shadow: 0 0 50px rgba(255, 193, 7, 1); }} }}
+        @keyframes glow {{ 0% {{ box-shadow: 0 0 30px rgba(243, 156, 18, 0.8); }} 100% {{ box-shadow: 0 0 50px rgba(243, 156, 18, 1); }} }}
         @keyframes spin {{ 0% {{ transform: rotate(0deg); }} 100% {{ transform: rotate(360deg); }} }}
         .status-text {{ font-size: 1.1em; font-weight: 500; min-height: 30px; }}
-        .status-text.listening {{ color: #20c997; }}
-        .status-text.wake-detected {{ color: #ffc107; }}
-        .status-text.processing {{ color: #dc3545; }}
+        .status-text.listening {{ color: #4a69bd; }}
+        .status-text.wake-detected {{ color: #f39c12; }}
+        .status-text.processing {{ color: #e74c3c; }}
         .controls {{ margin-bottom: 30px; }}
-        .control-button {{ background: linear-gradient(45deg, #007bff, #0056b3); color: white; border: none; padding: 12px 30px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 0 10px; transition: all 0.3s ease; }}
-        .control-button:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(0, 123, 255, 0.4); }}
-        .control-button.stop {{ background: linear-gradient(45deg, #dc3545, #c82333); }}
+        .control-button {{ background: linear-gradient(45deg, #4a69bd, #0097e6); color: white; border: none; padding: 12px 30px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; margin: 0 10px; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(74, 105, 189, 0.3); }}
+        .control-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(74, 105, 189, 0.5); }}
+        .control-button.stop {{ background: linear-gradient(45deg, #e74c3c, #c0392b); }}
         .control-button:disabled {{ background: #6c757d; cursor: not-allowed; transform: none; box-shadow: none; }}
-        .manual-input {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; }}
-        .manual-input h3 {{ margin-bottom: 15px; text-align: center; }}
+        .manual-input {{ background: rgba(74, 105, 189, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; border: 1px solid rgba(74, 105, 189, 0.3); }}
+        .manual-input h3 {{ margin-bottom: 15px; text-align: center; color: #4a69bd; }}
         .input-group {{ display: flex; gap: 10px; align-items: center; }}
-        .text-input {{ flex: 1; padding: 12px 15px; border: 2px solid rgba(255, 255, 255, 0.2); border-radius: 25px; background: rgba(255, 255, 255, 0.1); color: white; font-size: 1em; outline: none; transition: all 0.3s ease; }}
-        .text-input:focus {{ border-color: #007bff; background: rgba(255, 255, 255, 0.15); }}
+        .text-input {{ flex: 1; padding: 12px 15px; border: 2px solid rgba(74, 105, 189, 0.3); border-radius: 25px; background: rgba(26, 26, 46, 0.8); color: white; font-size: 1em; outline: none; transition: all 0.3s ease; }}
+        .text-input:focus {{ border-color: #4a69bd; background: rgba(26, 26, 46, 0.9); box-shadow: 0 0 10px rgba(74, 105, 189, 0.3); }}
         .text-input::placeholder {{ color: rgba(255, 255, 255, 0.6); }}
-        .send-button {{ background: linear-gradient(45deg, #28a745, #20c997); color: white; border: none; padding: 12px 25px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; transition: all 0.3s ease; }}
-        .send-button:hover {{ transform: translateY(-2px); box-shadow: 0 5px 15px rgba(40, 167, 69, 0.4); }}
-        .transcription {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; border: 2px solid transparent; transition: all 0.3s ease; }}
-        .transcription.active {{ border-color: #28a745; background: rgba(40, 167, 69, 0.1); }}
-        .transcription h3 {{ font-size: 1.1em; margin-bottom: 10px; opacity: 0.8; }}
+        .send-button {{ background: linear-gradient(45deg, #27ae60, #2ecc71); color: white; border: none; padding: 12px 25px; border-radius: 25px; font-size: 1em; font-weight: 600; cursor: pointer; transition: all 0.3s ease; box-shadow: 0 4px 15px rgba(39, 174, 96, 0.3); }}
+        .send-button:hover {{ transform: translateY(-2px); box-shadow: 0 6px 20px rgba(39, 174, 96, 0.5); }}
+        .transcription {{ background: rgba(74, 105, 189, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; border: 2px solid transparent; transition: all 0.3s ease; }}
+        .transcription.active {{ border-color: #4a69bd; background: rgba(74, 105, 189, 0.2); }}
+        .transcription h3 {{ font-size: 1.1em; margin-bottom: 10px; opacity: 0.8; color: #4a69bd; }}
         .transcription-text {{ font-size: 1.2em; font-weight: 500; font-family: 'Courier New', monospace; }}
-        .response {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; text-align: left; white-space: pre-wrap; display: none; }}
-        .response.success {{ background: rgba(40, 167, 69, 0.2); border: 2px solid #28a745; }}
-        .response.error {{ background: rgba(220, 53, 69, 0.2); border: 2px solid #dc3545; }}
+        .response {{ background: rgba(74, 105, 189, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; min-height: 80px; text-align: left; white-space: pre-wrap; display: none; }}
+        .response.success {{ background: rgba(39, 174, 96, 0.2); border: 2px solid #27ae60; }}
+        .response.error {{ background: rgba(231, 76, 60, 0.2); border: 2px solid #e74c3c; }}
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
-        .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
-        .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
-        .capabilities {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; text-align: left; }}
-        .capabilities h3 {{ margin-bottom: 15px; text-align: center; color: #ffc107; }}
+        .browser-support.unsupported {{ color: #e74c3c; font-weight: bold; opacity: 1; }}
+        .privacy-note {{ background: rgba(243, 156, 18, 0.2); border: 1px solid #f39c12; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
+        .capabilities {{ background: rgba(74, 105, 189, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; text-align: left; border: 1px solid rgba(74, 105, 189, 0.3); }}
+        .capabilities h3 {{ margin-bottom: 15px; text-align: center; color: #f39c12; }}
         .capability-section {{ margin-bottom: 15px; }}
-        .capability-section h4 {{ color: #20c997; margin-bottom: 5px; }}
+        .capability-section h4 {{ color: #4a69bd; margin-bottom: 5px; }}
         .capability-section ul {{ margin-left: 20px; }}
         .capability-section li {{ margin-bottom: 3px; font-size: 0.9em; }}
         @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header img {{ max-height: 220px; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} .input-group {{ flex-direction: column; gap: 15px; }} .text-input {{ width: 100%; margin-bottom: 10px; }} .send-button {{ width: 100%; }} }}
@@ -1417,40 +1513,41 @@ def get_html_template():
 <body>
     <div class="container">
         <div class="header">
-            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Lina AI Assistant Logo" />
-            <p>Voice-powered business automation with CRM integration!</p>
+            <h1>Manny</h1>
+            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Manny AI Assistant Logo" />
+            <p>Voice-powered business automation with HubSpot CRM integration!</p>
         </div>
         
         <div class="capabilities">
-            <h3>🚀 Lina Capabilities</h3>
+            <h3>🚀 Manny Capabilities</h3>
             <div class="capability-section">
                 <h4>📱 Communication</h4>
                 <ul>
-                    <li>"Hey Lina text John saying meeting at 3pm"</li>
-                    <li>"Hey Lina email client@company.com saying proposal attached"</li>
+                    <li>"Hey Manny text John saying meeting at 3pm"</li>
+                    <li>"Hey Manny email client@company.com saying proposal attached"</li>
                 </ul>
             </div>
             <div class="capability-section">
-                <h4>👥 CRM Contacts</h4>
+                <h4>👥 HubSpot Contacts</h4>
                 <ul>
-                    <li>"Hey Lina create contact John Smith email john@test.com"</li>
-                    <li>"Hey Lina add note to client ABC saying discussed pricing"</li>
-                    <li>"Hey Lina show me Sarah's contact details"</li>
+                    <li>"Hey Manny create contact John Smith email john@test.com"</li>
+                    <li>"Hey Manny add note to client ABC saying discussed pricing"</li>
+                    <li>"Hey Manny show me Sarah's contact details"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📋 Tasks & Calendar</h4>
                 <ul>
-                    <li>"Hey Lina create task to follow up with prospects"</li>
-                    <li>"Hey Lina schedule 30-minute meeting with new lead tomorrow"</li>
-                    <li>"Hey Lina show my meetings for this week"</li>
+                    <li>"Hey Manny create task to follow up with prospects"</li>
+                    <li>"Hey Manny schedule 30-minute meeting with new lead tomorrow"</li>
+                    <li>"Hey Manny show my meetings for this week"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📊 Sales Pipeline</h4>
                 <ul>
-                    <li>"Hey Lina create opportunity for XYZ Company worth $25,000"</li>
-                    <li>"Hey Lina show me this month's sales pipeline status"</li>
+                    <li>"Hey Manny create deal for XYZ Company worth $25,000"</li>
+                    <li>"Hey Manny show me this month's sales pipeline status"</li>
                 </ul>
             </div>
         </div>
@@ -1471,13 +1568,13 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Lina create contact John Smith" or "Hey Lina text 555-1234 saying hello"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny create contact John Smith" or "Hey Manny text 555-1234 saying hello"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & CRM operations | Auto-adds "Hey Lina" if missing</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey Manny" if missing</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. CRM data is securely handled via encrypted APIs.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. HubSpot CRM data is securely handled via encrypted APIs.</div>
     </div>
 
     <script>
@@ -1502,12 +1599,10 @@ def get_html_template():
         const response = document.getElementById('response');
         const browserSupport = document.getElementById('browserSupport');
 
-        // Enhanced wake word variations for Lina
+        // Enhanced wake word variations for Manny
         const wakeWords = [
-            'hey lina', 'lina', 'hey leena', 'leena',
-            'hey lena', 'lena', 'hey lynn', 'lynn',
-            'hey ai co-pilot', 'hey ai copilot', 'ai co-pilot', 'ai copilot',
-            'hey copilot', 'copilot'
+            'hey manny', 'manny', 'hey ai assistant', 'ai assistant',
+            'hey voice assistant', 'voice assistant'
         ];
 
         function checkForWakeWordInBuffer(buffer) {{
@@ -1535,7 +1630,7 @@ def get_html_template():
                     retryCount = 0;
                     lastError = null;
                     shouldStop = false;
-                    updateUI('listening', '🎤 Listening for "Hey Lina"...', '👂');
+                    updateUI('listening', '🎤 Listening for "Hey Manny"...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -1653,7 +1748,7 @@ def get_html_template():
                     }}
                 }};
 
-                browserSupport.textContent = 'Enhanced voice recognition with CRM support ✅';
+                browserSupport.textContent = 'Enhanced voice recognition with HubSpot CRM support ✅';
                 browserSupport.className = 'browser-support';
                 return true;
             }} else {{
@@ -1745,7 +1840,7 @@ def get_html_template():
             const hasWakeWord = wakeWords.some(wakeWord => lowerCommand.startsWith(wakeWord.toLowerCase()));
             
             if (!hasWakeWord) {{
-                command = 'Hey AI Co-pilot ' + command;
+                command = 'Hey Manny ' + command;
                 manualInput.value = command;
                 setTimeout(() => {{ manualInput.value = ''; }}, 2000);
             }} else {{
@@ -1919,8 +2014,8 @@ def test_email():
         if CONFIG["email_address"] and CONFIG["email_password"]:
             result = email_client.send_email(
                 test_email, 
-                "Test Email from AI Co-pilot System", 
-                "This is a test email sent from your AI Co-pilot System to verify email configuration is working correctly."
+                "Test Email from Manny Voice Assistant", 
+                "This is a test email sent from your Manny Voice Assistant to verify email configuration is working correctly."
             )
             
             if result.get("success"):
@@ -1947,7 +2042,7 @@ def health_check():
         "services": {
             "twilio_configured": bool(twilio_client.client),
             "email_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
-            "gohighlevel_configured": bool(CONFIG["ghl_api_key"] and CONFIG["ghl_location_id"]),
+            "hubspot_configured": bool(CONFIG["hubspot_api_token"]),
             "claude_configured": bool(CONFIG["claude_api_key"])
         },
         "email_config": {
@@ -1956,22 +2051,22 @@ def health_check():
             "smtp_port": CONFIG["email_smtp_port"]
         },
         "crm_integration": {
-            "provider": "GoHighLevel",
-            "location_id": CONFIG["ghl_location_id"][:8] + "..." if CONFIG["ghl_location_id"] else "Not set"
+            "provider": "HubSpot",
+            "api_configured": bool(CONFIG["hubspot_api_token"])
         }
     })
 
 @app.route('/health-crm', methods=['GET'])
 def crm_health_check():
     """CRM-specific health check"""
-    ghl_test = ghl_service.test_connection()
+    hubspot_test = hubspot_service.test_connection()
     
     return jsonify({
         "status": "healthy",
         "crm_integration": {
-            "gohighlevel_configured": bool(ghl_service.api_key and ghl_service.location_id),
-            "gohighlevel_connection": ghl_test.get("success", False),
-            "gohighlevel_error": ghl_test.get("error") if not ghl_test.get("success") else None,
+            "hubspot_configured": bool(hubspot_service.api_token),
+            "hubspot_connection": hubspot_test.get("success", False),
+            "hubspot_error": hubspot_test.get("error") if not hubspot_test.get("success") else None,
             "supported_crm_actions": [
                 "create_contact", "update_contact_phone", "add_contact_note", "search_contact",
                 "create_task", "schedule_meeting", "show_calendar", 
@@ -1985,27 +2080,27 @@ def crm_health_check():
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting Lina AI Assistant with GoHighLevel CRM Integration")
+    print("🚀 Starting Manny AI Assistant with HubSpot CRM Integration")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     
     email_status = "✅ Ready" if CONFIG['email_address'] and CONFIG['email_password'] else "⚠️ Not configured"
     print(f"📧 Email ({CONFIG['email_provider'].title()}): {email_status}")
     
-    crm_status = "✅ Ready" if CONFIG['ghl_api_key'] and CONFIG['ghl_location_id'] else "⚠️ Not configured"
-    print(f"🏢 GoHighLevel CRM: {crm_status}")
-    if CONFIG['ghl_location_id']:
-        print(f"   └─ Location ID: {CONFIG['ghl_location_id']}")
+    hubspot_status = "✅ Ready" if CONFIG['hubspot_api_token'] else "⚠️ Not configured"
+    print(f"🏢 HubSpot CRM: {hubspot_status}")
+    if CONFIG['hubspot_api_token']:
+        print(f"   └─ Token: {CONFIG['hubspot_api_token'][:12]}...")
     
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
     print("\n🎯 Supported Voice Commands:")
-    print("   📱 SMS: 'Hey Lina text John saying hello'")
-    print("   📧 Email: 'Hey Lina email client@company.com saying proposal ready'")
-    print("   👥 Contacts: 'Hey Lina create contact John Smith email john@test.com'")
-    print("   📋 Tasks: 'Hey Lina create task to follow up with prospects'")
-    print("   📅 Calendar: 'Hey Lina schedule meeting with new lead tomorrow'")
-    print("   📊 Pipeline: 'Hey Lina show me this month's sales pipeline status'")
+    print("   📱 SMS: 'Hey Manny text John saying hello'")
+    print("   📧 Email: 'Hey Manny email client@company.com saying proposal ready'")
+    print("   👥 Contacts: 'Hey Manny create contact John Smith email john@test.com'")
+    print("   📋 Tasks: 'Hey Manny create task to follow up with prospects'")
+    print("   📅 Calendar: 'Hey Manny schedule meeting with new lead tomorrow'")
+    print("   📊 Pipeline: 'Hey Manny show me this month's sales pipeline status'")
     
     port = int(os.environ.get("PORT", 10000))
     print(f"\n🚀 Starting on port {port}")

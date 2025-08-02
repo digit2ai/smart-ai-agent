@@ -1,12 +1,12 @@
-# Minimal Flask Wake Word App - SMS & Email Focus with Always Listening Frontend
+# Enhanced Flask Wake Word App - SMS, Email & CRM with GoHighLevel Integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
 import json
 import os
 import re
-from datetime import datetime
-from typing import Dict, Any, List
+from datetime import datetime, timedelta
+from typing import Dict, Any, List, Optional
 
 # Import Twilio REST API client
 try:
@@ -30,20 +30,398 @@ CONFIG = {
     "twilio_account_sid": os.getenv("TWILIO_ACCOUNT_SID", ""),
     "twilio_auth_token": os.getenv("TWILIO_AUTH_TOKEN", ""),
     "twilio_phone_number": os.getenv("TWILIO_PHONE_NUMBER", ""),
-    # Email configuration - supports multiple providers
+    # Email configuration
     "email_provider": os.getenv("EMAIL_PROVIDER", "networksolutions").lower(),
     "email_smtp_server": os.getenv("SMTP_SERVER", os.getenv("EMAIL_SMTP_SERVER", "netsol-smtp-oxcs.hostingplatform.com")),
     "email_smtp_port": int(os.getenv("SMTP_PORT", os.getenv("EMAIL_SMTP_PORT", "587"))),
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
     "email_name": os.getenv("EMAIL_NAME", "Voice Command System"),
-    "wake_words": "hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly,cimanka, seemahnkah".split(","),
-    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ringly"),
+    # GoHighLevel CRM configuration
+    "ghl_api_key": os.getenv("GHL_API_KEY", ""),
+    "ghl_location_id": os.getenv("GHL_LOCATION_ID", ""),
+    # Wake word configuration
+    "wake_words": "hey ai co-pilot,ai co-pilot,hey copilot,copilot,hey ai copilot,ai copilot,hey ringly,ringly,hey ring,ring,hey wrinkly,wrinkly,hey wrinkle,hey wrigley,wrigley,hey ringley,ringley,hey ringling,ringling,hey wrigly,wrigly".split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey ai co-pilot"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }
 
 print(f"🎙️ Wake words: {CONFIG['wake_words']}")
 print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
+
+# ==================== GOHIGHLEVEL CRM SERVICE ====================
+
+class GoHighLevelService:
+    """GoHighLevel CRM API service for voice command integration"""
+    
+    def __init__(self):
+        self.api_key = CONFIG["ghl_api_key"]
+        self.location_id = CONFIG["ghl_location_id"]
+        self.base_url = "https://services.leadconnectorhq.com"
+        self.headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+            "Version": "2021-07-28"
+        }
+        
+        if self.api_key and self.location_id:
+            print("✅ GoHighLevel service initialized")
+            print(f"📍 Location ID: {self.location_id}")
+        else:
+            print("⚠️ GoHighLevel not configured - missing API_KEY or LOCATION_ID")
+    
+    def test_connection(self) -> Dict[str, Any]:
+        """Test GoHighLevel API connection"""
+        if not self.api_key or not self.location_id:
+            return {"success": False, "error": "GoHighLevel credentials not configured"}
+        
+        try:
+            response = requests.get(
+                f"{self.base_url}/locations/{self.location_id}",
+                headers=self.headers,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return {"success": True, "message": "GoHighLevel connection successful"}
+            else:
+                return {"success": False, "error": f"API returned status {response.status_code}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Connection failed: {str(e)}"}
+    
+    def create_contact(self, name: str, email: str = "", phone: str = "", company: str = "") -> Dict[str, Any]:
+        """Create new contact in GoHighLevel"""
+        try:
+            name_parts = name.strip().split()
+            first_name = name_parts[0] if name_parts else ""
+            last_name = " ".join(name_parts[1:]) if len(name_parts) > 1 else ""
+            
+            contact_data = {
+                "firstName": first_name,
+                "lastName": last_name,
+                "locationId": self.location_id
+            }
+            
+            if email:
+                contact_data["email"] = email
+            if phone:
+                contact_data["phone"] = phone
+            if company:
+                contact_data["companyName"] = company
+            
+            response = requests.post(
+                f"{self.base_url}/contacts/",
+                headers=self.headers,
+                json=contact_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                contact = response.json()
+                return {
+                    "success": True,
+                    "message": f"Contact created: {name}",
+                    "contact_id": contact.get("contact", {}).get("id"),
+                    "data": contact
+                }
+            else:
+                return {"success": False, "error": f"Failed to create contact: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error creating contact: {str(e)}"}
+    
+    def search_contact(self, query: str) -> Dict[str, Any]:
+        """Search for contacts by name, email, or phone"""
+        try:
+            search_params = {"locationId": self.location_id, "query": query}
+            
+            response = requests.get(
+                f"{self.base_url}/contacts/search",
+                headers=self.headers,
+                params=search_params,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                results = response.json()
+                contacts = results.get("contacts", [])
+                
+                if contacts:
+                    return {
+                        "success": True,
+                        "message": f"Found {len(contacts)} contact(s)",
+                        "contacts": contacts
+                    }
+                else:
+                    return {"success": False, "error": f"No contacts found for '{query}'"}
+            else:
+                return {"success": False, "error": f"Search failed: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error searching contacts: {str(e)}"}
+    
+    def update_contact(self, contact_id: str, updates: Dict[str, Any]) -> Dict[str, Any]:
+        """Update contact information"""
+        try:
+            response = requests.put(
+                f"{self.base_url}/contacts/{contact_id}",
+                headers=self.headers,
+                json=updates,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                return {
+                    "success": True,
+                    "message": "Contact updated successfully",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to update contact: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error updating contact: {str(e)}"}
+    
+    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+        """Add note to contact"""
+        try:
+            note_data = {
+                "body": note,
+                "contactId": contact_id,
+                "userId": self.location_id
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/contacts/{contact_id}/notes",
+                headers=self.headers,
+                json=note_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Note added to contact",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to add note: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error adding note: {str(e)}"}
+    
+    def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
+        """Create new task"""
+        try:
+            task_data = {
+                "title": title,
+                "body": description,
+                "locationId": self.location_id
+            }
+            
+            if contact_id:
+                task_data["contactId"] = contact_id
+            
+            if due_date:
+                task_data["dueDate"] = self._parse_date(due_date)
+            
+            response = requests.post(
+                f"{self.base_url}/tasks/",
+                headers=self.headers,
+                json=task_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Task created: {title}",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to create task: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error creating task: {str(e)}"}
+    
+    def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
+        """Create calendar appointment"""
+        try:
+            start_datetime = self._parse_datetime(start_time) if start_time else datetime.now() + timedelta(hours=1)
+            end_datetime = start_datetime + timedelta(minutes=duration)
+            
+            appointment_data = {
+                "title": title,
+                "startTime": start_datetime.isoformat(),
+                "endTime": end_datetime.isoformat(),
+                "locationId": self.location_id
+            }
+            
+            if contact_id:
+                appointment_data["contactId"] = contact_id
+            
+            response = requests.post(
+                f"{self.base_url}/calendars/events",
+                headers=self.headers,
+                json=appointment_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Appointment scheduled: {title}",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to create appointment: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error creating appointment: {str(e)}"}
+    
+    def get_calendar_events(self, start_date: str = "", end_date: str = "") -> Dict[str, Any]:
+        """Get calendar events for date range"""
+        try:
+            params = {"locationId": self.location_id}
+            
+            if start_date:
+                params["startDate"] = self._parse_date(start_date)
+            else:
+                params["startDate"] = datetime.now().strftime("%Y-%m-%d")
+            
+            if end_date:
+                params["endDate"] = self._parse_date(end_date)
+            else:
+                params["endDate"] = (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+            
+            response = requests.get(
+                f"{self.base_url}/calendars/events",
+                headers=self.headers,
+                params=params,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                events = response.json()
+                return {
+                    "success": True,
+                    "message": f"Retrieved {len(events.get('events', []))} events",
+                    "events": events.get("events", [])
+                }
+            else:
+                return {"success": False, "error": f"Failed to get events: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error getting events: {str(e)}"}
+    
+    def create_opportunity(self, name: str, contact_id: str = "", value: float = 0) -> Dict[str, Any]:
+        """Create new opportunity in sales pipeline"""
+        try:
+            opportunity_data = {
+                "name": name,
+                "locationId": self.location_id
+            }
+            
+            if contact_id:
+                opportunity_data["contactId"] = contact_id
+            
+            if value > 0:
+                opportunity_data["monetaryValue"] = value
+            
+            response = requests.post(
+                f"{self.base_url}/opportunities/",
+                headers=self.headers,
+                json=opportunity_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Opportunity created: {name}",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to create opportunity: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error creating opportunity: {str(e)}"}
+    
+    def get_pipeline_summary(self) -> Dict[str, Any]:
+        """Get pipeline summary and statistics"""
+        try:
+            params = {"locationId": self.location_id}
+            
+            response = requests.get(
+                f"{self.base_url}/opportunities/",
+                headers=self.headers,
+                params=params,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                opportunities = response.json()
+                
+                total_value = sum(opp.get("monetaryValue", 0) for opp in opportunities.get("opportunities", []))
+                total_count = len(opportunities.get("opportunities", []))
+                
+                return {
+                    "success": True,
+                    "message": f"Pipeline has {total_count} opportunities worth ${total_value:,.2f}",
+                    "total_value": total_value,
+                    "total_count": total_count,
+                    "opportunities": opportunities.get("opportunities", [])
+                }
+            else:
+                return {"success": False, "error": f"Failed to get pipeline data: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error getting pipeline summary: {str(e)}"}
+    
+    def _parse_date(self, date_string: str) -> str:
+        """Parse natural language date to YYYY-MM-DD format"""
+        date_string = date_string.lower().strip()
+        
+        if "today" in date_string:
+            return datetime.now().strftime("%Y-%m-%d")
+        elif "tomorrow" in date_string:
+            return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        elif "next week" in date_string:
+            return (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
+        elif "friday" in date_string:
+            today = datetime.now()
+            days_ahead = 4 - today.weekday()
+            if days_ahead <= 0:
+                days_ahead += 7
+            return (today + timedelta(days=days_ahead)).strftime("%Y-%m-%d")
+        else:
+            try:
+                parsed = datetime.strptime(date_string, "%Y-%m-%d")
+                return parsed.strftime("%Y-%m-%d")
+            except:
+                return datetime.now().strftime("%Y-%m-%d")
+    
+    def _parse_datetime(self, datetime_string: str) -> datetime:
+        """Parse natural language datetime"""
+        datetime_string = datetime_string.lower().strip()
+        
+        if "tomorrow" in datetime_string:
+            base_date = datetime.now() + timedelta(days=1)
+            if "pm" in datetime_string or "am" in datetime_string:
+                time_match = re.search(r'(\d{1,2})\s*(am|pm)', datetime_string)
+                if time_match:
+                    hour = int(time_match.group(1))
+                    if time_match.group(2) == "pm" and hour != 12:
+                        hour += 12
+                    elif time_match.group(2) == "am" and hour == 12:
+                        hour = 0
+                    return base_date.replace(hour=hour, minute=0, second=0, microsecond=0)
+            return base_date.replace(hour=14, minute=0, second=0, microsecond=0)
+        else:
+            return datetime.now() + timedelta(hours=1)
+
+# ==================== EXISTING SERVICES ====================
 
 class TwilioClient:
     """Simple Twilio client for SMS"""
@@ -88,31 +466,20 @@ class TwilioClient:
             return {"error": f"Failed to send SMS: {str(e)}"}
 
 class EmailService:
-    """SMTP Email service with provider support - FIXED VERSION"""
+    """SMTP Email service with provider support"""
     
     def __init__(self, smtp_server: str, smtp_port: int, email_address: str, 
                  email_password: str, email_name: str, email_provider: str):
-        print(f"🔍 DEBUG - EmailService init called with:")
-        print(f"   smtp_server: {smtp_server}")
-        print(f"   smtp_port: {smtp_port}")
-        print(f"   email_address: {email_address}")
-        print(f"   email_provider: {email_provider}")
-        
         self.email_address = email_address
         self.email_password = email_password
         self.email_name = email_name
         self.email_provider = email_provider.lower()
         
-        # FIXED: Only use environment variables if they're explicitly set
-        # Don't override with provider defaults if env vars are already configured
         if smtp_server and smtp_server.strip():
             self.smtp_server = smtp_server
             self.smtp_port = smtp_port
-            print(f"🔍 DEBUG - Using explicit SMTP config: {self.smtp_server}:{self.smtp_port}")
         else:
-            # Only fall back to provider defaults if no explicit config
             self._configure_provider_defaults()
-            print(f"🔍 DEBUG - Using provider defaults: {self.smtp_server}:{self.smtp_port}")
         
         if email_address and email_password:
             print(f"✅ Email client configured for {self.email_provider.title()}")
@@ -121,7 +488,7 @@ class EmailService:
             print("⚠️ Email not configured - missing credentials")
     
     def _configure_provider_defaults(self):
-        """Configure default settings based on email provider - ONLY when no explicit config"""
+        """Configure default settings based on email provider"""
         provider_configs = {
             "networksolutions": {"server": "netsol-smtp-oxcs.hostingplatform.com", "port": 587},
             "gmail": {"server": "smtp.gmail.com", "port": 587},
@@ -135,20 +502,13 @@ class EmailService:
             self.smtp_server = config["server"]
             self.smtp_port = config["port"]
         else:
-            # Default fallback
             self.smtp_server = "smtp.gmail.com"
             self.smtp_port = 587
     
-    def send_email(self, to: str, subject: str, message: str, is_html: bool = False) -> Dict[str, Any]:
+    def send_email(self, to: str, subject: str, message: str) -> Dict[str, Any]:
         """Send email via SMTP"""
         if not self.email_address or not self.email_password:
             return {"success": False, "error": "Email client not configured"}
-        
-        print(f"🔍 DEBUG - Attempting to send email:")
-        print(f"   Using SMTP Server: {self.smtp_server}:{self.smtp_port}")
-        print(f"   From: {self.email_address}")
-        print(f"   To: {to}")
-        print(f"   Provider: {self.email_provider}")
         
         try:
             msg = MIMEMultipart()
@@ -156,18 +516,12 @@ class EmailService:
             msg['To'] = to
             msg['Subject'] = subject
             
-            body_type = "html" if is_html else "plain"
-            msg.attach(MIMEText(message, body_type))
+            msg.attach(MIMEText(message, 'plain'))
             
-            print(f"🔍 DEBUG - Connecting to SMTP server: {self.smtp_server}:{self.smtp_port}")
             with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                print(f"🔍 DEBUG - Connected! Starting TLS...")
                 server.starttls()
-                print(f"🔍 DEBUG - TLS started! Attempting login...")
                 server.login(self.email_address, self.email_password)
-                print(f"🔍 DEBUG - Login successful! Sending email...")
                 server.sendmail(self.email_address, to, msg.as_string())
-                print(f"🔍 DEBUG - Email sent successfully!")
             
             return {
                 "success": True,
@@ -180,27 +534,10 @@ class EmailService:
             }
             
         except Exception as e:
-            print(f"🔍 DEBUG - Email send failed with error: {str(e)}")
             return {"success": False, "error": f"Failed to send email: {str(e)}"}
-    
-    def test_connection(self) -> Dict[str, Any]:
-        """Test email connection"""
-        if not self.email_address or not self.email_password:
-            return {"success": False, "error": "Email credentials not configured"}
-        
-        try:
-            print(f"🔍 DEBUG - Testing connection to: {self.smtp_server}:{self.smtp_port}")
-            with smtplib.SMTP(self.smtp_server, self.smtp_port) as server:
-                server.starttls()
-                server.login(self.email_address, self.email_password)
-            
-            return {"success": True, "message": "Email connection successful"}
-            
-        except Exception as e:
-            return {"success": False, "error": f"Email connection failed: {str(e)}"}
 
 class EmailClient:
-    """Wrapper for EmailService to maintain compatibility - CLEANED UP VERSION"""
+    """Wrapper for EmailService"""
     
     def __init__(self):
         self.email_service = EmailService(
@@ -216,8 +553,198 @@ class EmailClient:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
 
+# ==================== CRM COMMAND EXTRACTORS ====================
+
+def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM contact commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Create new contact
+    create_patterns = [
+        r'create (?:new )?contact (?:for )?(.+?)(?:\s+(?:at|with email|email)\s+(.+?))?(?:\s+(?:phone|with phone)\s+(.+?))?(?:\s+(?:at company|company)\s+(.+?))?$',
+        r'add (?:new )?contact (.+?)(?:\s+email\s+(.+?))?(?:\s+phone\s+(.+?))?(?:\s+company\s+(.+?))?$'
+    ]
+    
+    for pattern in create_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            email = match.group(2).strip() if match.group(2) else ""
+            phone = match.group(3).strip() if match.group(3) else ""
+            company = match.group(4).strip() if match.group(4) else ""
+            
+            return {
+                "action": "create_contact",
+                "name": name,
+                "email": email,
+                "phone": phone,
+                "company": company
+            }
+    
+    # Update contact phone number
+    phone_update_patterns = [
+        r'update (.+?)(?:\'s)?\s+phone (?:number )?to (.+)',
+        r'change (.+?)(?:\'s)?\s+phone (?:number )?to (.+)'
+    ]
+    
+    for pattern in phone_update_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            phone = match.group(2).strip()
+            
+            return {
+                "action": "update_contact_phone",
+                "name": name,
+                "phone": phone
+            }
+    
+    # Add note to contact
+    note_patterns = [
+        r'add note to (?:client )?(.+?) saying (.+)',
+        r'note (?:for )?(.+?) (?:saying |that )?(.+)'
+    ]
+    
+    for pattern in note_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            note = match.group(2).strip()
+            
+            return {
+                "action": "add_contact_note",
+                "name": name,
+                "note": note
+            }
+    
+    # Search contact
+    search_patterns = [
+        r'show (?:me )?(.+?)(?:\'s)?\s+(?:contact )?(?:details|info|information)',
+        r'find contact (?:for )?(.+)'
+    ]
+    
+    for pattern in search_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            
+            return {
+                "action": "search_contact",
+                "query": name
+            }
+    
+    return None
+
+def extract_crm_task_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM task commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Create task
+    create_patterns = [
+        r'create task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$',
+        r'add task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$'
+    ]
+    
+    for pattern in create_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            title = match.group(1).strip()
+            contact = match.group(2).strip() if match.group(2) else ""
+            due_date = match.group(3).strip() if match.group(3) else ""
+            
+            return {
+                "action": "create_task",
+                "title": title,
+                "contact": contact,
+                "due_date": due_date
+            }
+    
+    return None
+
+def extract_crm_calendar_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM calendar commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Schedule appointment/meeting
+    schedule_patterns = [
+        r'schedule (?:(?:a )?(\d+)[-\s]?minute )?(?:meeting|appointment|call) (?:with )?(.+?)(?:\s+(?:for|at|on)\s+(.+?))?$',
+        r'book (?:(?:a )?(\d+)[-\s]?minute )?(?:meeting|appointment|call) (?:with )?(.+?)(?:\s+(?:for|at|on)\s+(.+?))?$'
+    ]
+    
+    for pattern in schedule_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            duration = int(match.group(1)) if match.group(1) else 30
+            contact = match.group(2).strip()
+            when = match.group(3).strip() if match.group(3) else ""
+            
+            return {
+                "action": "schedule_meeting",
+                "contact": contact,
+                "duration": duration,
+                "when": when
+            }
+    
+    # Show calendar
+    calendar_patterns = [
+        r'show (?:me )?(?:my )?(?:meetings|calendar|appointments) (?:for )?(.+?)$',
+        r'what(?:\'s| is) (?:on )?(?:my )?(?:calendar|schedule) (?:for )?(.+?)$'
+    ]
+    
+    for pattern in calendar_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            when = match.group(1).strip()
+            
+            return {
+                "action": "show_calendar",
+                "when": when
+            }
+    
+    return None
+
+def extract_crm_pipeline_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM pipeline commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Create opportunity
+    opportunity_patterns = [
+        r'create (?:new )?(?:opportunity|deal) (?:for )?(.+?)(?:\s+worth\s+\$?([0-9,]+))?(?:\s+(?:for|with)\s+(.+?))?$'
+    ]
+    
+    for pattern in opportunity_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            value = float(match.group(2).replace(",", "")) if match.group(2) else 0
+            contact = match.group(3).strip() if match.group(3) else ""
+            
+            return {
+                "action": "create_opportunity",
+                "name": name,
+                "value": value,
+                "contact": contact
+            }
+    
+    # Show pipeline status
+    pipeline_patterns = [
+        r'show (?:me )?(?:this month(?:\'s)?|current) (?:sales )?pipeline (?:status)?',
+        r'(?:sales )?pipeline (?:summary|status|report)'
+    ]
+    
+    for pattern in pipeline_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            return {
+                "action": "show_pipeline_summary"
+            }
+    
+    return None
+
+# ==================== ENHANCED WAKE WORD PROCESSOR ====================
+
 class WakeWordProcessor:
-    """Simple wake word detection"""
+    """Enhanced wake word detection with CRM support"""
     
     def __init__(self):
         self.wake_words = CONFIG["wake_words"]
@@ -264,13 +791,13 @@ class WakeWordProcessor:
         }
     
     def process_wake_word_command(self, text: str) -> Dict[str, Any]:
-        """Process text with wake word detection"""
+        """Enhanced process_wake_word_command with CRM support"""
         wake_result = self.detect_wake_word(text)
         
         if not wake_result["has_wake_word"]:
             return {
                 "success": False,
-                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word}: text John saying hello'"
+                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word} text John saying hello'"
             }
         
         command_text = wake_result["command_text"]
@@ -281,18 +808,45 @@ class WakeWordProcessor:
                 "error": f"Please provide a command after '{wake_result['wake_word_detected']}'"
             }
         
-        # Try to extract SMS command
+        # Try SMS command
         sms_command = extract_sms_command(command_text)
         if sms_command:
             sms_command["wake_word_info"] = wake_result
             return sms_command
         
-        # Try to extract email command
+        # Try email command
         email_command = extract_email_command(command_text)
         if email_command:
             email_command["wake_word_info"] = wake_result
-            print(f"📧 Email command created with action: {email_command.get('action')}")
             return email_command
+        
+        # Try CRM contact commands
+        contact_command = extract_crm_contact_command(command_text)
+        if contact_command:
+            contact_command["wake_word_info"] = wake_result
+            print(f"🏢 CRM Contact command: {contact_command.get('action')}")
+            return contact_command
+        
+        # Try CRM task commands
+        task_command = extract_crm_task_command(command_text)
+        if task_command:
+            task_command["wake_word_info"] = wake_result
+            print(f"📋 CRM Task command: {task_command.get('action')}")
+            return task_command
+        
+        # Try CRM calendar commands
+        calendar_command = extract_crm_calendar_command(command_text)
+        if calendar_command:
+            calendar_command["wake_word_info"] = wake_result
+            print(f"📅 CRM Calendar command: {calendar_command.get('action')}")
+            return calendar_command
+        
+        # Try CRM pipeline commands
+        pipeline_command = extract_crm_pipeline_command(command_text)
+        if pipeline_command:
+            pipeline_command["wake_word_info"] = wake_result
+            print(f"📊 CRM Pipeline command: {pipeline_command.get('action')}")
+            return pipeline_command
         
         # Fallback to Claude
         try:
@@ -300,20 +854,22 @@ class WakeWordProcessor:
             claude_result = call_claude(command_text)
             if claude_result and "error" not in claude_result:
                 claude_result["wake_word_info"] = wake_result
-                print(f"🤖 Claude returned action: {claude_result.get('action')}")
                 return claude_result
         except Exception as e:
             print(f"Claude error: {e}")
         
         return {
             "success": False,
-            "error": f"I didn't understand: '{command_text}'. Try: '{self.primary_wake_word}: text John saying hello'"
+            "error": f"I didn't understand: '{command_text}'. Try SMS, Email, or CRM commands like 'create contact John Smith' or 'schedule meeting with client'"
         }
 
-# Initialize clients
+# Initialize services
 twilio_client = TwilioClient()
 email_client = EmailClient()
+ghl_service = GoHighLevelService()
 wake_word_processor = WakeWordProcessor()
+
+# ==================== EXISTING HELPER FUNCTIONS ====================
 
 def call_claude(prompt):
     """Simple Claude API call"""
@@ -330,23 +886,14 @@ You are an intelligent assistant. Respond ONLY with valid JSON using one of the 
 Supported actions:
 - send_message (supports SMS via Twilio)
 - send_email (supports email via SMTP)
+- create_contact (supports CRM contact creation)
+- create_task (supports CRM task creation)
+- schedule_meeting (supports CRM calendar)
 
-Response structure for SMS:
-{
-  "action": "send_message",
-  "recipient": "phone number or name",
-  "message": "message text"
-}
-
-Response structure for Email:
-{
-  "action": "send_email",
-  "recipient": "email address",
-  "subject": "email subject",
-  "message": "email body"
-}
-
-Only include fields relevant to the action.
+Response structure examples:
+{"action": "send_message", "recipient": "phone number", "message": "text"}
+{"action": "send_email", "recipient": "email", "subject": "subject", "message": "body"}
+{"action": "create_contact", "name": "Full Name", "email": "email", "phone": "phone"}
 """
         
         full_prompt = f"{instruction_prompt}\n\nUser: {prompt}"
@@ -374,22 +921,18 @@ def fix_email_addresses(text: str) -> str:
     """Fix email addresses that get split by speech recognition"""
     fixed_text = text
     
-    # Fix "Manuel stagg@gmail.com" -> "Manuelstagg@gmail.com"
     pattern1 = r'\b(\w+)\s+(\w+@(?:gmail|yahoo|hotmail|outlook|icloud|aol)\.com)\b'
     fixed_text = re.sub(pattern1, r'\1\2', fixed_text, flags=re.IGNORECASE)
     
-    # Fix "manuel stack gmail.com" -> "manuelstack@gmail.com"
     pattern2 = r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b'
     fixed_text = re.sub(pattern2, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
     
-    # Fix "stack" -> "stagg" common substitution
     fixed_text = re.sub(r'\bstack@', 'stagg@', fixed_text, flags=re.IGNORECASE)
     
     return fixed_text
 
 def extract_email_command(text: str) -> Dict[str, Any]:
     """Extract email command from text"""
-    # Fix email addresses first
     original_text = text
     fixed_text = fix_email_addresses(text)
     
@@ -408,20 +951,18 @@ def extract_email_command(text: str) -> Dict[str, Any]:
     for pattern in patterns:
         match = re.search(pattern, text_lower, re.IGNORECASE)
         if match:
-            if len(match.groups()) == 3:  # Has subject
+            if len(match.groups()) == 3:
                 recipient = match.group(1).strip()
                 subject = match.group(2).strip()
                 message = match.group(3).strip()
-            else:  # No subject
+            else:
                 recipient = match.group(1).strip()
                 subject = "Voice Command Message"
                 message = match.group(2).strip()
             
-            # Clean up voice artifacts
             message = message.replace(" period", ".").replace(" comma", ",")
             subject = subject.replace(" period", ".").replace(" comma", ",")
             
-            # Return email action (FIXED - was incorrectly returning send_email_as_sms)
             return {
                 "action": "send_email",
                 "recipient": recipient,
@@ -439,7 +980,7 @@ def extract_sms_command(text: str) -> Dict[str, Any]:
         r'message (.+?) saying (.+)',
         r'send (.+?) the message (.+)',
         r'tell (.+?) that (.+)',
-        r'text (.+?) (.+)',  # Simple pattern: "text John hello there"
+        r'text (.+?) (.+)',
     ]
     
     text_lower = text.lower().strip()
@@ -450,7 +991,6 @@ def extract_sms_command(text: str) -> Dict[str, Any]:
             recipient = match.group(1).strip()
             message = match.group(2).strip()
             
-            # Clean up voice artifacts
             message = message.replace(" period", ".").replace(" comma", ",")
             
             return {
@@ -489,6 +1029,8 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
+# ==================== ACTION HANDLERS ====================
+
 def handle_send_message(data):
     """Handle SMS sending"""
     recipient = data.get("recipient", "")
@@ -521,20 +1063,297 @@ def handle_send_email(data):
     else:
         return f"❌ Invalid email address: {recipient}"
 
+# ==================== CRM ACTION HANDLERS ====================
+
+def handle_create_contact(data):
+    """Handle creating new contact in GoHighLevel"""
+    name = data.get("name", "")
+    email = data.get("email", "")
+    phone = data.get("phone", "")
+    company = data.get("company", "")
+    
+    if not name:
+        return "❌ Contact name is required"
+    
+    result = ghl_service.create_contact(name, email, phone, company)
+    
+    if result.get("success"):
+        response = f"✅ Contact created: {name}"
+        if email:
+            response += f"\n📧 Email: {email}"
+        if phone:
+            response += f"\n📱 Phone: {phone}"
+        if company:
+            response += f"\n🏢 Company: {company}"
+        return response
+    else:
+        return f"❌ Failed to create contact: {result.get('error')}"
+
+def handle_update_contact_phone(data):
+    """Handle updating contact phone number"""
+    name = data.get("name", "")
+    phone = data.get("phone", "")
+    
+    if not name or not phone:
+        return "❌ Both contact name and phone number are required"
+    
+    search_result = ghl_service.search_contact(name)
+    
+    if not search_result.get("success"):
+        return f"❌ Could not find contact: {name}"
+    
+    contacts = search_result.get("contacts", [])
+    if not contacts:
+        return f"❌ No contact found with name: {name}"
+    
+    contact = contacts[0]
+    contact_id = contact.get("id")
+    
+    update_result = ghl_service.update_contact(contact_id, {"phone": phone})
+    
+    if update_result.get("success"):
+        return f"✅ Updated {name}'s phone number to {phone}"
+    else:
+        return f"❌ Failed to update phone: {update_result.get('error')}"
+
+def handle_add_contact_note(data):
+    """Handle adding note to contact"""
+    name = data.get("name", "")
+    note = data.get("note", "")
+    
+    if not name or not note:
+        return "❌ Both contact name and note are required"
+    
+    search_result = ghl_service.search_contact(name)
+    
+    if not search_result.get("success"):
+        return f"❌ Could not find contact: {name}"
+    
+    contacts = search_result.get("contacts", [])
+    if not contacts:
+        return f"❌ No contact found with name: {name}"
+    
+    contact = contacts[0]
+    contact_id = contact.get("id")
+    
+    note_result = ghl_service.add_contact_note(contact_id, note)
+    
+    if note_result.get("success"):
+        return f"✅ Added note to {name}: {note}"
+    else:
+        return f"❌ Failed to add note: {note_result.get('error')}"
+
+def handle_search_contact(data):
+    """Handle searching for contact"""
+    query = data.get("query", "")
+    
+    if not query:
+        return "❌ Search query is required"
+    
+    result = ghl_service.search_contact(query)
+    
+    if result.get("success"):
+        contacts = result.get("contacts", [])
+        if contacts:
+            response = f"✅ Found {len(contacts)} contact(s):\n\n"
+            for i, contact in enumerate(contacts[:3], 1):
+                response += f"{i}. {contact.get('firstName', '')} {contact.get('lastName', '')}\n"
+                if contact.get("email"):
+                    response += f"   📧 {contact.get('email')}\n"
+                if contact.get("phone"):
+                    response += f"   📱 {contact.get('phone')}\n"
+                if contact.get("companyName"):
+                    response += f"   🏢 {contact.get('companyName')}\n"
+                response += "\n"
+            return response.strip()
+        else:
+            return f"❌ No contacts found for: {query}"
+    else:
+        return f"❌ Search failed: {result.get('error')}"
+
+def handle_create_task(data):
+    """Handle creating new task"""
+    title = data.get("title", "")
+    contact = data.get("contact", "")
+    due_date = data.get("due_date", "")
+    
+    if not title:
+        return "❌ Task title is required"
+    
+    contact_id = ""
+    if contact:
+        search_result = ghl_service.search_contact(contact)
+        if search_result.get("success"):
+            contacts = search_result.get("contacts", [])
+            if contacts:
+                contact_id = contacts[0].get("id")
+    
+    result = ghl_service.create_task(title, "", contact_id, due_date)
+    
+    if result.get("success"):
+        response = f"✅ Task created: {title}"
+        if contact:
+            response += f"\n👤 For: {contact}"
+        if due_date:
+            response += f"\n📅 Due: {due_date}"
+        return response
+    else:
+        return f"❌ Failed to create task: {result.get('error')}"
+
+def handle_schedule_meeting(data):
+    """Handle scheduling meetings/appointments"""
+    contact = data.get("contact", "")
+    duration = data.get("duration", 30)
+    when = data.get("when", "")
+    
+    if not contact:
+        return "❌ Contact name is required for scheduling"
+    
+    contact_id = ""
+    search_result = ghl_service.search_contact(contact)
+    if search_result.get("success"):
+        contacts = search_result.get("contacts", [])
+        if contacts:
+            contact_id = contacts[0].get("id")
+    
+    title = f"Meeting with {contact}"
+    result = ghl_service.create_appointment(title, contact_id, when, duration)
+    
+    if result.get("success"):
+        response = f"✅ {duration}-minute meeting scheduled with {contact}"
+        if when:
+            response += f"\n📅 Time: {when}"
+        else:
+            response += f"\n📅 Time: Default (1 hour from now)"
+        return response
+    else:
+        return f"❌ Failed to schedule meeting: {result.get('error')}"
+
+def handle_show_calendar(data):
+    """Handle showing calendar events"""
+    when = data.get("when", "")
+    
+    if "week" in when.lower():
+        start_date = ""
+        end_date = ""
+    elif "today" in when.lower():
+        start_date = datetime.now().strftime("%Y-%m-%d")
+        end_date = start_date
+    else:
+        start_date = when
+        end_date = ""
+    
+    result = ghl_service.get_calendar_events(start_date, end_date)
+    
+    if result.get("success"):
+        events = result.get("events", [])
+        if events:
+            response = f"✅ Calendar events for {when or 'this week'}:\n\n"
+            for i, event in enumerate(events[:5], 1):
+                response += f"{i}. {event.get('title', 'Untitled')}\n"
+                if event.get("startTime"):
+                    response += f"   📅 {event.get('startTime')}\n"
+                response += "\n"
+            return response.strip()
+        else:
+            return f"📅 No events found for {when or 'this period'}"
+    else:
+        return f"❌ Failed to get calendar: {result.get('error')}"
+
+def handle_create_opportunity(data):
+    """Handle creating new opportunity"""
+    name = data.get("name", "")
+    value = data.get("value", 0)
+    contact = data.get("contact", "")
+    
+    if not name:
+        return "❌ Opportunity name is required"
+    
+    contact_id = ""
+    if contact:
+        search_result = ghl_service.search_contact(contact)
+        if search_result.get("success"):
+            contacts = search_result.get("contacts", [])
+            if contacts:
+                contact_id = contacts[0].get("id")
+    
+    result = ghl_service.create_opportunity(name, contact_id, value)
+    
+    if result.get("success"):
+        response = f"✅ Opportunity created: {name}"
+        if value > 0:
+            response += f"\n💰 Value: ${value:,.2f}"
+        if contact:
+            response += f"\n👤 Contact: {contact}"
+        return response
+    else:
+        return f"❌ Failed to create opportunity: {result.get('error')}"
+
+def handle_show_pipeline_summary(data):
+    """Handle showing pipeline summary"""
+    result = ghl_service.get_pipeline_summary()
+    
+    if result.get("success"):
+        total_value = result.get("total_value", 0)
+        total_count = result.get("total_count", 0)
+        
+        response = f"📊 Sales Pipeline Summary:\n\n"
+        response += f"💰 Total Value: ${total_value:,.2f}\n"
+        response += f"📈 Total Opportunities: {total_count}\n"
+        
+        if total_count > 0:
+            avg_value = total_value / total_count
+            response += f"📊 Average Deal Size: ${avg_value:,.2f}"
+        
+        return response
+    else:
+        return f"❌ Failed to get pipeline summary: {result.get('error')}"
+
+# ==================== ENHANCED ACTION DISPATCHER ====================
+
 def dispatch_action(parsed):
-    """Simple action dispatcher"""
+    """Enhanced action dispatcher with CRM support"""
     action = parsed.get("action")
     print(f"🔧 Dispatching action: '{action}'")
     
+    # Communication actions
     if action == "send_message":
         return handle_send_message(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
+    
+    # CRM Contact actions
+    elif action == "create_contact":
+        return handle_create_contact(parsed)
+    elif action == "update_contact_phone":
+        return handle_update_contact_phone(parsed)
+    elif action == "add_contact_note":
+        return handle_add_contact_note(parsed)
+    elif action == "search_contact":
+        return handle_search_contact(parsed)
+    
+    # CRM Task actions
+    elif action == "create_task":
+        return handle_create_task(parsed)
+    
+    # CRM Calendar actions
+    elif action == "schedule_meeting":
+        return handle_schedule_meeting(parsed)
+    elif action == "show_calendar":
+        return handle_show_calendar(parsed)
+    
+    # CRM Pipeline actions
+    elif action == "create_opportunity":
+        return handle_create_opportunity(parsed)
+    elif action == "show_pipeline_summary":
+        return handle_show_pipeline_summary(parsed)
+    
     else:
         print(f"❌ Unknown action received: '{action}'")
-        return f"Unknown action: {action}"
+        return f"Unknown action: {action}. Supported: SMS, Email, CRM Contact/Task/Calendar/Pipeline operations"
 
-# Always Listening HTML Template with Enhanced Wake Word Detection
+# ==================== HTML TEMPLATE (Updated) ====================
+
 def get_html_template():
     primary_wake_word = CONFIG['wake_word_primary']
     return f'''<!DOCTYPE html>
@@ -542,7 +1361,7 @@ def get_html_template():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Wake Word SMS - Enhanced Voice</title>
+    <title>AI Co-pilot - Voice Assistant with CRM</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #2d2d2d url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
@@ -586,15 +1405,56 @@ def get_html_template():
         .browser-support {{ font-size: 0.9em; opacity: 0.8; margin-top: 20px; }}
         .browser-support.unsupported {{ color: #dc3545; font-weight: bold; opacity: 1; }}
         .privacy-note {{ background: rgba(255, 193, 7, 0.2); border: 1px solid #ffc107; border-radius: 10px; padding: 15px; margin-top: 20px; font-size: 0.9em; }}
+        .capabilities {{ background: rgba(255, 255, 255, 0.1); border-radius: 15px; padding: 20px; margin-bottom: 20px; text-align: left; }}
+        .capabilities h3 {{ margin-bottom: 15px; text-align: center; color: #ffc107; }}
+        .capability-section {{ margin-bottom: 15px; }}
+        .capability-section h4 {{ color: #20c997; margin-bottom: 5px; }}
+        .capability-section ul {{ margin-left: 20px; }}
+        .capability-section li {{ margin-bottom: 3px; font-size: 0.9em; }}
         @media (max-width: 600px) {{ .container {{ padding: 20px; margin: 10px; }} .header img {{ max-height: 220px; }} .voice-indicator {{ width: 80px; height: 80px; font-size: 32px; }} .control-button {{ padding: 10px 20px; font-size: 0.9em; margin: 5px; }} .input-group {{ flex-direction: column; gap: 15px; }} .text-input {{ width: 100%; margin-bottom: 10px; }} .send-button {{ width: 100%; }} }}
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Wake Word SMS Logo" />
-            <p>Enhanced voice recognition - adapts to your pronunciation!</p>
+            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="AI Co-pilot Logo" />
+            <p>Voice-powered business automation with CRM integration!</p>
         </div>
+        
+        <div class="capabilities">
+            <h3>🚀 AI Co-pilot Capabilities</h3>
+            <div class="capability-section">
+                <h4>📱 Communication</h4>
+                <ul>
+                    <li>"Hey AI Co-pilot text John saying meeting at 3pm"</li>
+                    <li>"Hey AI Co-pilot email client@company.com saying proposal attached"</li>
+                </ul>
+            </div>
+            <div class="capability-section">
+                <h4>👥 CRM Contacts</h4>
+                <ul>
+                    <li>"Hey AI Co-pilot create contact John Smith email john@test.com"</li>
+                    <li>"Hey AI Co-pilot add note to client ABC saying discussed pricing"</li>
+                    <li>"Hey AI Co-pilot show me Sarah's contact details"</li>
+                </ul>
+            </div>
+            <div class="capability-section">
+                <h4>📋 Tasks & Calendar</h4>
+                <ul>
+                    <li>"Hey AI Co-pilot create task to follow up with prospects"</li>
+                    <li>"Hey AI Co-pilot schedule 30-minute meeting with new lead tomorrow"</li>
+                    <li>"Hey AI Co-pilot show my meetings for this week"</li>
+                </ul>
+            </div>
+            <div class="capability-section">
+                <h4>📊 Sales Pipeline</h4>
+                <ul>
+                    <li>"Hey AI Co-pilot create opportunity for XYZ Company worth $25,000"</li>
+                    <li>"Hey AI Co-pilot show me this month's sales pipeline status"</li>
+                </ul>
+            </div>
+        </div>
+        
         <div class="listening-status">
             <div class="voice-indicator idle" id="voiceIndicator">🎤</div>
             <div class="status-text" id="statusText">Click "Start Listening" to begin</div>
@@ -611,13 +1471,13 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='MUST start with "Hey Ringly" - Try: "Hey Ringly text 6566001400 saying hello" or "Hey Ringly email john@gmail.com saying test"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey AI Co-pilot create contact John Smith" or "Hey AI Co-pilot text 555-1234 saying hello"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Both voice and text commands require "Hey Ringly" wake word | Supports SMS & Email</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & CRM operations | Auto-adds "Hey AI Co-pilot" if missing</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. CRM data is securely handled via encrypted APIs.</div>
     </div>
 
     <script>
@@ -642,8 +1502,10 @@ def get_html_template():
         const response = document.getElementById('response');
         const browserSupport = document.getElementById('browserSupport');
 
-        // All wake word variations that speech recognition might hear
+        // Enhanced wake word variations for AI Co-pilot
         const wakeWords = [
+            'hey ai co-pilot', 'hey ai copilot', 'ai co-pilot', 'ai copilot',
+            'hey copilot', 'copilot',
             'hey ringly', 'hey ring', 'ringly', 
             'hey wrinkly', 'wrinkly', 'hey wrinkle',
             'hey wrigley', 'wrigley', 
@@ -673,12 +1535,11 @@ def get_html_template():
                 recognition.maxAlternatives = 1;
 
                 recognition.onstart = function() {{
-                    console.log('Speech recognition started successfully');
                     isListening = true;
-                    retryCount = 0; // Reset retry count on successful start
-                    lastError = null; // Clear last error
-                    shouldStop = false; // Reset stop flag
-                    updateUI('listening', '🎤 Listening for wake word...', '👂');
+                    retryCount = 0;
+                    lastError = null;
+                    shouldStop = false;
+                    updateUI('listening', '🎤 Listening for "Hey AI Co-pilot"...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -697,14 +1558,10 @@ def get_html_template():
                     if (currentText) {{
                         transcriptionText.textContent = currentText;
                         transcription.classList.add('active');
-                        console.log('Speech detected:', currentText);
                     }}
                     
                     if (finalTranscript && !isProcessingCommand) {{
-                        console.log('Final transcript received:', finalTranscript.trim());
-                        
                         commandBuffer += finalTranscript.trim() + ' ';
-                        console.log('Command buffer now:', commandBuffer);
                         
                         if (bufferTimeout) {{
                             clearTimeout(bufferTimeout);
@@ -713,94 +1570,60 @@ def get_html_template():
                         const hasWakeWord = checkForWakeWordInBuffer(commandBuffer);
                         
                         if (hasWakeWord) {{
-                            // Check if command looks incomplete (wait longer for complete commands)
                             const commandLower = commandBuffer.toLowerCase().trim();
-                            const hasActionWord = commandLower.includes('text') || commandLower.includes('send') || commandLower.includes('message') || commandLower.includes('email');
-                            const hasPhoneNumber = /\d{{3}}-?\d{{3}}-?\d{{4}}|\d{{10}}/.test(commandBuffer);
-                            const hasEmail = commandBuffer.includes('@');
-                            const hasSaying = commandLower.includes('saying');
+                            const hasActionWord = commandLower.includes('text') || commandLower.includes('send') || 
+                                                commandLower.includes('message') || commandLower.includes('email') ||
+                                                commandLower.includes('create') || commandLower.includes('add') ||
+                                                commandLower.includes('schedule') || commandLower.includes('show') ||
+                                                commandLower.includes('update');
                             
-                            // Check if it's just a wake word with no meaningful content
                             const justWakeWord = wakeWords.some(wake => commandLower.trim() === wake.toLowerCase());
                             
-                            let waitTime = 4000; // Default 4 seconds (increased from 2)
+                            let waitTime = justWakeWord || !hasActionWord ? 8000 : 4000;
                             
-                            // If it's just a wake word OR missing essential parts, wait much longer
-                            if (justWakeWord || !hasActionWord || ((!hasPhoneNumber && !hasEmail) || !hasSaying)) {{
-                                waitTime = 8000; // Wait 8 seconds for complete command (increased from 5)
-                                console.log('Command incomplete - waiting longer for full command...');
+                            if (justWakeWord || !hasActionWord) {{
                                 updateUI('wake-detected', '⏳ Capturing complete command...', '⏳');
                             }} else {{
-                                console.log('Command looks complete, processing soon...');
                                 updateUI('wake-detected', '⚡ Complete command detected!', '⚡');
                             }}
                             
                             bufferTimeout = setTimeout(() => {{
-                                console.log('Processing complete command from buffer:', commandBuffer);
                                 checkForWakeWord(commandBuffer.trim());
                                 commandBuffer = '';
                             }}, waitTime);
                         }} else {{
                             bufferTimeout = setTimeout(() => {{
                                 commandBuffer = '';
-                                console.log('Buffer cleared - no wake word found');
-                            }}, 6000); // Increased from 3 seconds to 6 seconds
+                            }}, 6000);
                         }}
                     }}
                 }};
 
                 recognition.onerror = function(event) {{
-                    console.log('Speech recognition error:', event.error);
                     lastError = event.error;
                     
-                    // Handle different error types
                     if (event.error === 'no-speech') {{
-                        console.log('No speech detected, continuing to listen...');
-                        return; // Don't restart for no-speech
+                        return;
                     }}
                     
                     if (event.error === 'aborted') {{
-                        console.log('Speech recognition aborted - STOPPING all restart attempts');
                         shouldStop = true;
                         continuousListening = false;
-                        retryCount = maxRetries; // Force max retries
+                        retryCount = maxRetries;
                         
                         setTimeout(() => {{
-                            updateUI('idle', 'Speech recognition was blocked by browser. Please click Start Listening to try again.', '❌');
+                            updateUI('idle', 'Speech recognition was blocked. Please click Start Listening to try again.', '❌');
                             startButton.disabled = false;
                             stopButton.disabled = true;
                         }}, 100);
                         return;
                     }}
                     
-                    let errorMessage = 'Recognition error: ';
-                    switch(event.error) {{
-                        case 'network': 
-                            errorMessage += 'Network error. Check connection.'; 
-                            break;
-                        case 'not-allowed': 
-                            errorMessage += 'Microphone access denied.'; 
-                            shouldStop = true;
-                            continuousListening = false;
-                            stopListening(); 
-                            return;
-                        case 'service-not-allowed': 
-                            errorMessage += 'Speech service not allowed.'; 
-                            shouldStop = true;
-                            continuousListening = false;
-                            stopListening(); 
-                            return;
-                        default: 
-                            errorMessage += event.error;
-                    }}
-                    
-                    console.error('Speech recognition error:', errorMessage);
+                    let errorMessage = 'Recognition error: ' + event.error;
                     updateUI('idle', errorMessage, '❌');
                     
-                    // Stop trying after any error
                     retryCount++;
                     if (retryCount >= maxRetries) {{
-                        console.log('Max retries reached, stopping completely');
                         shouldStop = true;
                         continuousListening = false;
                         updateUI('idle', 'Speech recognition failed. Click Start Listening to try again.', '❌');
@@ -810,12 +1633,9 @@ def get_html_template():
                 }};
 
                 recognition.onend = function() {{
-                    console.log('Speech recognition ended');
                     isListening = false;
                     
-                    // Don't restart if we should stop or hit certain errors
                     if (shouldStop || lastError === 'aborted' || !continuousListening || isProcessingCommand) {{
-                        console.log('Not restarting - shouldStop:', shouldStop, 'lastError:', lastError, 'continuousListening:', continuousListening);
                         updateUI('idle', 'Speech recognition stopped', '🎤');
                         startButton.disabled = false;
                         stopButton.disabled = true;
@@ -823,15 +1643,12 @@ def get_html_template():
                     }}
                     
                     if (continuousListening && retryCount < maxRetries) {{
-                        // Add delay before restart to prevent rapid cycling
                         setTimeout(() => {{ 
                             if (continuousListening && !shouldStop && !isListening) {{ 
-                                console.log('Attempting restart from onend');
                                 restartListening(); 
                             }}
-                        }}, 1000); // Increased delay
+                        }}, 1000);
                     }} else {{
-                        console.log('Max retries reached in onend, stopping');
                         continuousListening = false;
                         shouldStop = true;
                         updateUI('idle', 'Speech recognition stopped. Click Start Listening to restart.', '🎤');
@@ -840,7 +1657,7 @@ def get_html_template():
                     }}
                 }};
 
-                browserSupport.textContent = 'Enhanced voice recognition supported ✅';
+                browserSupport.textContent = 'Enhanced voice recognition with CRM support ✅';
                 browserSupport.className = 'browser-support';
                 return true;
             }} else {{
@@ -855,59 +1672,43 @@ def get_html_template():
             const lowerText = text.toLowerCase().trim();
             let wakeWordFound = false;
             let detectedWakeWord = '';
-            console.log('Checking for wake word in:', text);
-            console.log('Available wake words:', wakeWords);
             
             for (const wakeWord of wakeWords) {{
-                console.log('Testing wake word:', wakeWord, 'in text:', lowerText);
                 if (lowerText.includes(wakeWord)) {{
                     wakeWordFound = true;
                     detectedWakeWord = wakeWord;
-                    console.log('✅ Wake word FOUND:', wakeWord);
                     break;
                 }}
             }}
             
             if (wakeWordFound) {{
-                console.log('🚀 Processing wake word command:', text);
                 processWakeWordCommand(text);
-            }} else {{
-                console.log('❌ No wake word found in:', text);
-                console.log('Expected one of:', wakeWords);
             }}
         }}
 
         async function processWakeWordCommand(fullText) {{
             if (isProcessingCommand) {{
-                console.log('Already processing a command, ignoring...');
                 return;
             }}
-            console.log('Starting to process wake word command:', fullText);
             isProcessingCommand = true;
             updateUI('wake-detected', '⚡ Wake word detected! Processing...', '⚡');
             transcriptionText.textContent = fullText;
             try {{
                 updateUI('processing', '📤 Sending command...', '⚙️');
-                console.log('Sending request to /execute with:', {{ text: fullText }});
                 const apiResponse = await fetch('/execute', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
                     body: JSON.stringify({{ text: fullText }})
                 }});
-                console.log('API response status:', apiResponse.status);
                 const data = await apiResponse.json();
-                console.log('API response data:', data);
                 if (apiResponse.ok) {{
                     showResponse(data.response || 'Command executed successfully!', 'success');
                     updateUI('listening', '✅ Command sent! Listening for next command...', '👂');
-                    console.log('Command processed successfully');
                 }} else {{
                     showResponse(data.error || 'An error occurred while processing your command.', 'error');
                     updateUI('listening', '❌ Error occurred. Listening for next command...', '👂');
-                    console.error('Command processing error:', data.error);
                 }}
             }} catch (error) {{
-                console.error('Network error sending command:', error);
                 showResponse('Network error. Please check your connection and try again.', 'error');
                 updateUI('listening', '❌ Network error. Listening for next command...', '👂');
             }} finally {{
@@ -944,25 +1745,20 @@ def get_html_template():
                 return;
             }}
             
-            // Auto-add wake word if missing
             const lowerCommand = command.toLowerCase();
             const hasWakeWord = wakeWords.some(wakeWord => lowerCommand.startsWith(wakeWord.toLowerCase()));
             
             if (!hasWakeWord) {{
-                command = 'Hey Ringly ' + command;
-                console.log('Auto-added wake word. Final command:', command);
-                // Update the input to show what was actually sent
+                command = 'Hey AI Co-pilot ' + command;
                 manualInput.value = command;
-                setTimeout(() => {{ manualInput.value = ''; }}, 2000); // Clear after 2 seconds
+                setTimeout(() => {{ manualInput.value = ''; }}, 2000);
             }} else {{
-                manualInput.value = ''; // Clear input after sending
+                manualInput.value = '';
             }}
             
-            console.log('Sending manual command:', command);
             processWakeWordCommand(command);
         }}
 
-        // Allow Enter key to send manual command
         document.addEventListener('DOMContentLoaded', function() {{
             const manualInput = document.getElementById('manualCommand');
             if (manualInput) {{
@@ -980,16 +1776,12 @@ def get_html_template():
                 return;
             }}
             
-            // Stop any existing recognition first
             if (isListening) {{
                 try {{
                     recognition.stop();
-                }} catch (e) {{
-                    console.log('Error stopping existing recognition:', e);
-                }}
+                }} catch (e) {{}}
             }}
             
-            // Reset ALL state variables
             continuousListening = true;
             retryCount = 0;
             lastError = null;
@@ -999,17 +1791,12 @@ def get_html_template():
             response.style.display = 'none';
             commandBuffer = '';
             
-            console.log('Starting fresh speech recognition attempt');
-            
-            // Wait a moment then start
             setTimeout(() => {{
                 try {{
-                    if (!isListening && !shouldStop) {{ // Double check we're not already listening
-                        console.log('Calling recognition.start()');
+                    if (!isListening && !shouldStop) {{ 
                         recognition.start();
                     }}
                 }} catch (error) {{
-                    console.error('Error starting recognition:', error);
                     updateUI('idle', 'Error starting recognition. Please try again.', '❌');
                     startButton.disabled = false;
                     stopButton.disabled = true;
@@ -1021,16 +1808,14 @@ def get_html_template():
 
         function stopListening() {{
             continuousListening = false;
-            shouldStop = true; // Set stop flag
-            retryCount = 0; // Reset retry count
-            lastError = null; // Clear last error
+            shouldStop = true;
+            retryCount = 0;
+            lastError = null;
             
             if (recognition && isListening) {{
                 try {{
                     recognition.stop();
-                }} catch (error) {{
-                    console.error('Error stopping recognition:', error);
-                }}
+                }} catch (error) {{}}
             }}
             
             updateUI('idle', 'Stopped listening', '🎤');
@@ -1047,15 +1832,12 @@ def get_html_template():
 
         function restartListening() {{
             if (shouldStop || !continuousListening || !recognition || isListening || retryCount >= maxRetries) {{
-                console.log('Not restarting - shouldStop:', shouldStop, 'continuousListening:', continuousListening, 'isListening:', isListening, 'retryCount:', retryCount);
                 return;
             }}
             
             try {{
-                console.log('Attempting to restart speech recognition...');
                 recognition.start();
             }} catch (error) {{
-                console.error('Error restarting recognition:', error);
                 retryCount++;
                 if (retryCount < maxRetries && !shouldStop) {{
                     setTimeout(() => {{ 
@@ -1064,7 +1846,6 @@ def get_html_template():
                         }} 
                     }}, retryDelay);
                 }} else {{
-                    console.log('Max retries reached in restart, stopping');
                     shouldStop = true;
                     continuousListening = false;
                     updateUI('idle', 'Speech recognition failed. Click Start Listening to try again.', '❌');
@@ -1085,22 +1866,23 @@ def get_html_template():
         document.addEventListener('click', function() {{
             if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {{
                 navigator.mediaDevices.getUserMedia({{ audio: true }})
-                    .then(() => {{ console.log('Microphone permission granted'); }})
-                    .catch((error) => {{ console.warn('Microphone permission denied:', error); }});
+                    .then(() => {{}})
+                    .catch((error) => {{}});
             }}
         }}, {{ once: true }});
     </script>
 </body>
 </html>'''
 
-# Routes
+# ==================== ROUTES ====================
+
 @app.route("/")
 def root():
     return get_html_template()
 
 @app.route('/favicon.ico')
 def favicon():
-    return '', 204  # No content, prevents 404 error
+    return '', 204
 
 @app.route('/execute', methods=['POST'])
 def execute():
@@ -1108,7 +1890,6 @@ def execute():
         data = request.json
         prompt = data.get("text", "")
         
-        # Process with wake word
         wake_result = wake_word_processor.process_wake_word_command(prompt)
         
         if not wake_result.get("success", True):
@@ -1140,16 +1921,10 @@ def test_email():
         test_email = data.get("email", "test@example.com")
         
         if CONFIG["email_address"] and CONFIG["email_password"]:
-            # Test connection first
-            connection_test = email_client.email_service.test_connection()
-            if not connection_test.get("success"):
-                return jsonify({"error": f"Email connection failed: {connection_test.get('error')}"})
-            
-            # Send test email
             result = email_client.send_email(
                 test_email, 
-                "Test Email from Voice Command System", 
-                "This is a test email sent from your Voice Command System to verify email configuration is working correctly."
+                "Test Email from AI Co-pilot System", 
+                "This is a test email sent from your AI Co-pilot System to verify email configuration is working correctly."
             )
             
             if result.get("success"):
@@ -1173,51 +1948,70 @@ def health_check():
         "status": "healthy",
         "wake_word_enabled": CONFIG["wake_word_enabled"],
         "wake_word_primary": CONFIG["wake_word_primary"],
-        "twilio_configured": bool(twilio_client.client),
+        "services": {
+            "twilio_configured": bool(twilio_client.client),
+            "email_configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
+            "gohighlevel_configured": bool(CONFIG["ghl_api_key"] and CONFIG["ghl_location_id"]),
+            "claude_configured": bool(CONFIG["claude_api_key"])
+        },
         "email_config": {
             "provider": CONFIG["email_provider"],
-            "configured": bool(CONFIG["email_address"] and CONFIG["email_password"]),
-            "supported_providers": ["gmail", "outlook", "yahoo", "networksolutions", "hotmail"],
             "smtp_server": CONFIG["email_smtp_server"],
             "smtp_port": CONFIG["email_smtp_port"]
         },
-        "claude_configured": bool(CONFIG["claude_api_key"])
+        "crm_integration": {
+            "provider": "GoHighLevel",
+            "location_id": CONFIG["ghl_location_id"][:8] + "..." if CONFIG["ghl_location_id"] else "Not set"
+        }
+    })
+
+@app.route('/health-crm', methods=['GET'])
+def crm_health_check():
+    """CRM-specific health check"""
+    ghl_test = ghl_service.test_connection()
+    
+    return jsonify({
+        "status": "healthy",
+        "crm_integration": {
+            "gohighlevel_configured": bool(ghl_service.api_key and ghl_service.location_id),
+            "gohighlevel_connection": ghl_test.get("success", False),
+            "gohighlevel_error": ghl_test.get("error") if not ghl_test.get("success") else None,
+            "supported_crm_actions": [
+                "create_contact", "update_contact_phone", "add_contact_note", "search_contact",
+                "create_task", "schedule_meeting", "show_calendar", 
+                "create_opportunity", "show_pipeline_summary"
+            ]
+        },
+        "communication": {
+            "sms_enabled": bool(twilio_client.client),
+            "email_enabled": bool(CONFIG["email_address"] and CONFIG["email_password"])
+        }
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting Enhanced Wake Word SMS & Email App")
+    print("🚀 Starting AI Co-pilot with GoHighLevel CRM Integration")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     
-    # DEBUG: Print all email environment variables
-    print("🔍 DEBUG - Environment Variables:")
-    print(f"   EMAIL_PROVIDER env var: {os.getenv('EMAIL_PROVIDER', 'NOT SET')}")
-    print(f"   SMTP_SERVER env var: {os.getenv('SMTP_SERVER', 'NOT SET')}")
-    print(f"   EMAIL_ADDRESS env var: {os.getenv('EMAIL_ADDRESS', 'NOT SET')}")
-    print(f"   SMTP_PORT env var: {os.getenv('SMTP_PORT', 'NOT SET')}")
-    
-    # DEBUG: Print CONFIG values
-    print("🔍 DEBUG - CONFIG Values:")
-    print(f"   config email_provider: {CONFIG['email_provider']}")
-    print(f"   config email_smtp_server: {CONFIG['email_smtp_server']}")
-    print(f"   config email_smtp_port: {CONFIG['email_smtp_port']}")
-    print(f"   config email_address: {CONFIG['email_address']}")
-    
     email_status = "✅ Ready" if CONFIG['email_address'] and CONFIG['email_password'] else "⚠️ Not configured"
     print(f"📧 Email ({CONFIG['email_provider'].title()}): {email_status}")
-    if CONFIG['email_address']:
-        print(f"   └─ Provider: {CONFIG['email_provider'].title()}")
-        print(f"   └─ Server: {CONFIG['email_smtp_server']}:{CONFIG['email_smtp_port']}")
-        print(f"   └─ Account: {CONFIG['email_address']}")
-        print(f"   └─ Display Name: {CONFIG['email_name']}")
-        print(f"   └─ Ready to send FROM {CONFIG['email_address']} TO any recipient!")
-    else:
-        print(f"   └─ Supported: Gmail, Outlook, Yahoo, Network Solutions")
-        print(f"   └─ Configure: EMAIL_PROVIDER, EMAIL_ADDRESS, EMAIL_PASSWORD")
+    
+    crm_status = "✅ Ready" if CONFIG['ghl_api_key'] and CONFIG['ghl_location_id'] else "⚠️ Not configured"
+    print(f"🏢 GoHighLevel CRM: {crm_status}")
+    if CONFIG['ghl_location_id']:
+        print(f"   └─ Location ID: {CONFIG['ghl_location_id']}")
     
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
+    print("\n🎯 Supported Voice Commands:")
+    print("   📱 SMS: 'Hey AI Co-pilot text John saying hello'")
+    print("   📧 Email: 'Hey AI Co-pilot email client@company.com saying proposal ready'")
+    print("   👥 Contacts: 'Hey AI Co-pilot create contact John Smith email john@test.com'")
+    print("   📋 Tasks: 'Hey AI Co-pilot create task to follow up with prospects'")
+    print("   📅 Calendar: 'Hey AI Co-pilot schedule meeting with new lead tomorrow'")
+    print("   📊 Pipeline: 'Hey AI Co-pilot show me this month's sales pipeline status'")
+    
     port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Starting on port {port}")
+    print(f"\n🚀 Starting on port {port}")
     
     app.run(host="0.0.0.0", port=port, debug=False)

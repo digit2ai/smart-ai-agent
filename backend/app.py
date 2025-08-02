@@ -270,7 +270,7 @@ class HubSpotService:
             return {"success": False, "error": f"Error creating task: {str(e)}"}
     
     def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
-        """Create calendar appointment/meeting in HubSpot"""
+        """Create calendar appointment in HubSpot using appointments API"""
         try:
             start_datetime = self._parse_datetime(start_time) if start_time else datetime.now() + timedelta(hours=1)
             end_datetime = start_datetime + timedelta(minutes=duration)
@@ -279,37 +279,39 @@ class HubSpotService:
             start_timestamp = int(start_datetime.timestamp() * 1000)
             end_timestamp = int(end_datetime.timestamp() * 1000)
             
-            meeting_properties = {
-                "hs_meeting_title": title,
-                "hs_meeting_body": f"Meeting scheduled via Manny Voice Assistant",
+            # Use appointment properties instead of meeting properties
+            appointment_properties = {
+                "hs_appointment_title": title,
+                "hs_appointment_body": f"Appointment scheduled via Manny Voice Assistant",
                 "hs_timestamp": str(start_timestamp),  # Required field
-                "hs_meeting_start_time": str(start_timestamp),
-                "hs_meeting_end_time": str(end_timestamp)
+                "hs_appointment_start_time": str(start_timestamp),
+                "hs_appointment_end_time": str(end_timestamp)
             }
             
-            meeting_data = {"properties": meeting_properties}
+            appointment_data = {"properties": appointment_properties}
             
+            # Use appointments endpoint instead of meetings
             response = requests.post(
-                f"{self.base_url}/crm/v3/objects/meetings",
+                f"{self.base_url}/crm/v3/objects/appointments",
                 headers=self.headers,
-                json=meeting_data,
+                json=appointment_data,
                 timeout=10
             )
             
             if response.status_code in [200, 201]:
                 return {
                     "success": True,
-                    "message": f"Meeting scheduled: {title}",
+                    "message": f"Appointment scheduled: {title}",
                     "data": response.json()
                 }
             else:
-                return {"success": False, "error": f"Failed to create meeting: {response.text}"}
+                return {"success": False, "error": f"Failed to create appointment: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error creating meeting: {str(e)}"}
+            return {"success": False, "error": f"Error creating appointment: {str(e)}"}
     
     def get_calendar_events(self, start_date: str = "", end_date: str = "") -> Dict[str, Any]:
-        """Get calendar events (meetings) for date range"""
+        """Get calendar events (appointments) for date range"""
         try:
             # Parse dates or use defaults
             if start_date:
@@ -326,30 +328,30 @@ class HubSpotService:
             start_timestamp = int(start_dt.timestamp() * 1000)
             end_timestamp = int(end_dt.timestamp() * 1000)
             
-            # Search for meetings in the date range
+            # Search for appointments in the date range
             search_data = {
                 "filterGroups": [
                     {
                         "filters": [
                             {
-                                "propertyName": "hs_meeting_start_time",
+                                "propertyName": "hs_appointment_start_time",
                                 "operator": "GTE",
                                 "value": str(start_timestamp)
                             },
                             {
-                                "propertyName": "hs_meeting_start_time", 
+                                "propertyName": "hs_appointment_start_time", 
                                 "operator": "LTE",
                                 "value": str(end_timestamp)
                             }
                         ]
                     }
                 ],
-                "properties": ["hs_meeting_title", "hs_meeting_body", "hs_meeting_start_time", "hs_meeting_end_time"],
+                "properties": ["hs_appointment_title", "hs_appointment_body", "hs_appointment_start_time", "hs_appointment_end_time"],
                 "limit": 50
             }
             
             response = requests.post(
-                f"{self.base_url}/crm/v3/objects/meetings/search",
+                f"{self.base_url}/crm/v3/objects/appointments/search",
                 headers=self.headers,
                 json=search_data,
                 timeout=10
@@ -357,17 +359,17 @@ class HubSpotService:
             
             if response.status_code == 200:
                 results = response.json()
-                meetings = results.get("results", [])
+                appointments = results.get("results", [])
                 return {
                     "success": True,
-                    "message": f"Retrieved {len(meetings)} meeting(s)",
-                    "events": meetings
+                    "message": f"Retrieved {len(appointments)} appointment(s)",
+                    "events": appointments
                 }
             else:
-                return {"success": False, "error": f"Failed to get meetings: {response.text}"}
+                return {"success": False, "error": f"Failed to get appointments: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error getting meetings: {str(e)}"}
+            return {"success": False, "error": f"Error getting appointments: {str(e)}"}
     
     def create_opportunity(self, name: str, contact_id: str = "", value: float = 0) -> Dict[str, Any]:
         """Create new deal/opportunity in HubSpot sales pipeline"""
@@ -1285,18 +1287,18 @@ def handle_schedule_meeting(data):
         if contacts:
             contact_id = contacts[0].get("id")
     
-    title = f"Meeting with {contact}"
+    title = f"Appointment with {contact}"
     result = hubspot_service.create_appointment(title, contact_id, when, duration)
     
     if result.get("success"):
-        response = f"✅ {duration}-minute meeting scheduled with {contact}"
+        response = f"✅ {duration}-minute appointment scheduled with {contact}"
         if when:
             response += f"\n📅 Time: {when}"
         else:
             response += f"\n📅 Time: Default (1 hour from now)"
         return response
     else:
-        return f"❌ Failed to schedule meeting: {result.get('error')}"
+        return f"❌ Failed to schedule appointment: {result.get('error')}"
 
 def handle_show_calendar(data):
     """Handle showing calendar events"""
@@ -1320,15 +1322,15 @@ def handle_show_calendar(data):
             response = f"✅ Calendar events for {when or 'this week'}:\n\n"
             for i, event in enumerate(events[:5], 1):
                 props = event.get('properties', {})
-                response += f"{i}. {props.get('hs_meeting_title', 'Untitled')}\n"
-                if props.get("hs_meeting_start_time"):
+                response += f"{i}. {props.get('hs_appointment_title', 'Untitled')}\n"
+                if props.get("hs_appointment_start_time"):
                     # Convert timestamp to readable date
                     try:
-                        timestamp = int(props.get("hs_meeting_start_time")) / 1000
+                        timestamp = int(props.get("hs_appointment_start_time")) / 1000
                         start_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
                         response += f"   📅 {start_time}\n"
                     except:
-                        response += f"   📅 {props.get('hs_meeting_start_time')}\n"
+                        response += f"   📅 {props.get('hs_appointment_start_time')}\n"
                 response += "\n"
             return response.strip()
         else:

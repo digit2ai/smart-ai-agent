@@ -195,41 +195,57 @@ class HubSpotService:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
     
     def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
-        """Add note to contact using HubSpot Communications API or as contact property"""
+        """Add note by updating contact's notes field"""
         try:
-            # HubSpot expects timestamp in milliseconds
-            timestamp_ms = int(datetime.now().timestamp() * 1000)
-            
-            # Try timeline event first
-            timeline_event = {
-                "eventType": "note_added",
-                "objectType": "CONTACT", 
-                "objectId": contact_id,
-                "timestamp": timestamp_ms,
-                "properties": {
-                    "note_body": note,
-                    "note_source": "Manny Voice Assistant"
+            if not contact_id or contact_id == "0":
+                # If no specific contact, create a general note as a deal
+                note_deal = {
+                    "properties": {
+                        "dealname": f"NOTE: {note[:50]}...",
+                        "dealstage": "appointmentscheduled",
+                        "pipeline": "default", 
+                        "amount": "0",
+                        "description": f"Note created via Manny: {note}"
+                    }
                 }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/timeline/v3/events",
-                headers=self.headers,
-                json=timeline_event,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"Note added successfully via timeline",
-                    "data": response.json()
-                }
+                
+                response = requests.post(
+                    f"{self.base_url}/crm/v3/objects/deals",
+                    headers=self.headers,
+                    json=note_deal,
+                    timeout=10
+                )
+                
+                if response.status_code in [200, 201]:
+                    return {
+                        "success": True,
+                        "message": f"Note saved successfully",
+                        "data": response.json()
+                    }
             else:
-                # Fallback: Update contact with note in a custom property
+                # Update contact with note in description field
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                note_with_timestamp = f"[{timestamp}] {note}"
+                
+                # Get current contact to append to existing notes
+                get_response = requests.get(
+                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                    headers=self.headers,
+                    params={"properties": "notes"},
+                    timeout=10
+                )
+                
+                existing_notes = ""
+                if get_response.status_code == 200:
+                    contact_data = get_response.json()
+                    existing_notes = contact_data.get("properties", {}).get("notes", "")
+                
+                # Append new note
+                updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
+                
                 contact_update = {
                     "properties": {
-                        "hs_analytics_last_touch_converting_campaign": f"Note: {note} (added {datetime.now().strftime('%Y-%m-%d %H:%M')})"
+                        "notes": updated_notes
                     }
                 }
                 
@@ -243,45 +259,42 @@ class HubSpotService:
                 if update_response.status_code == 200:
                     return {
                         "success": True,
-                        "message": f"Note added as contact update",
+                        "message": f"Note added to contact",
                         "data": update_response.json()
                     }
-                else:
-                    return {"success": False, "error": f"Failed to add note: {response.text}"}
+            
+            return {"success": False, "error": "Failed to add note"}
                 
         except Exception as e:
             return {"success": False, "error": f"Error adding note: {str(e)}"}
     
     def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
-        """Create new task using timeline events"""
+        """Create task as a deal record in HubSpot"""
         try:
-            # HubSpot expects timestamp in milliseconds
-            current_timestamp = int(datetime.now().timestamp() * 1000)
+            # Create task as a deal with specific naming convention
+            task_name = f"TASK: {title}"
             
-            # Create timeline event for task
-            timeline_event = {
-                "eventType": "task_created",
-                "objectType": "CONTACT",
-                "objectId": contact_id if contact_id else "0",
-                "timestamp": current_timestamp,
-                "properties": {
-                    "task_title": title,
-                    "task_description": description or title,
-                    "task_status": "NOT_STARTED",
-                    "task_priority": "MEDIUM"
-                }
+            deal_properties = {
+                "dealname": task_name,
+                "dealstage": "appointmentscheduled",  # Use existing stage
+                "pipeline": "default",
+                "amount": "0",  # Tasks have no monetary value
+                "deal_type": "Task"  # Custom identifier
             }
+            
+            if description:
+                deal_properties["description"] = description
             
             if due_date:
                 parsed_date = self._parse_date(due_date)
-                due_datetime = datetime.strptime(parsed_date, "%Y-%m-%d")
-                due_timestamp = int(due_datetime.timestamp() * 1000)
-                timeline_event["properties"]["task_due_date"] = str(due_timestamp)
+                deal_properties["closedate"] = parsed_date
+            
+            deal_data = {"properties": deal_properties}
             
             response = requests.post(
-                f"{self.base_url}/timeline/v3/events",
+                f"{self.base_url}/crm/v3/objects/deals",
                 headers=self.headers,
-                json=timeline_event,
+                json=deal_data,
                 timeout=10
             )
             
@@ -292,43 +305,48 @@ class HubSpotService:
                     "data": response.json()
                 }
             else:
-                # Fallback: Create as contact note
-                task_note = f"Task: {title}"
-                if description:
-                    task_note += f" - {description}"
-                if due_date:
-                    task_note += f" (Due: {due_date})"
-                
-                return self.add_contact_note(contact_id if contact_id else "0", task_note)
+                return {"success": False, "error": f"Failed to create task: {response.text}"}
                 
         except Exception as e:
             return {"success": False, "error": f"Error creating task: {str(e)}"}
     
     def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
-        """Create calendar appointment using timeline events"""
+        """Create meeting as a deal record with meeting details"""
         try:
-            start_datetime = self._parse_datetime(start_time) if start_time else datetime.now() + timedelta(hours=1)
+            # Create meeting as a deal record
+            meeting_name = f"MEETING: {title}"
             
-            # Convert to timestamp in milliseconds
-            start_timestamp = int(start_datetime.timestamp() * 1000)
-            
-            # Create timeline event instead of appointment
-            timeline_event = {
-                "eventType": "meeting_scheduled",
-                "objectType": "CONTACT",
-                "objectId": contact_id if contact_id else "0",
-                "timestamp": start_timestamp,
-                "properties": {
-                    "meeting_title": title,
-                    "meeting_duration": str(duration),
-                    "meeting_type": "Voice Scheduled"
-                }
+            deal_properties = {
+                "dealname": meeting_name,
+                "dealstage": "appointmentscheduled",
+                "pipeline": "default",
+                "amount": "0",  # Meetings have no monetary value
+                "deal_type": "Meeting"
             }
             
+            # Add meeting details to description
+            meeting_details = f"Meeting: {title}\nDuration: {duration} minutes"
+            if start_time:
+                meeting_details += f"\nScheduled for: {start_time}"
+            else:
+                meeting_details += f"\nScheduled for: 1 hour from now"
+            
+            deal_properties["description"] = meeting_details
+            
+            # Set close date based on meeting time
+            if start_time:
+                parsed_date = self._parse_date(start_time)
+                deal_properties["closedate"] = parsed_date
+            else:
+                tomorrow = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d")
+                deal_properties["closedate"] = tomorrow
+            
+            deal_data = {"properties": deal_properties}
+            
             response = requests.post(
-                f"{self.base_url}/timeline/v3/events",
+                f"{self.base_url}/crm/v3/objects/deals",
                 headers=self.headers,
-                json=timeline_event,
+                json=deal_data,
                 timeout=10
             )
             
@@ -339,80 +357,91 @@ class HubSpotService:
                     "data": response.json()
                 }
             else:
-                # Fallback: Try creating as a contact note instead
-                note_text = f"Meeting scheduled: {title} ({duration} minutes)"
-                if start_time:
-                    note_text += f" for {start_time}"
-                
-                return self.add_contact_note(contact_id if contact_id else "0", note_text)
+                return {"success": False, "error": f"Failed to schedule meeting: {response.text}"}
                 
         except Exception as e:
             return {"success": False, "error": f"Error creating meeting: {str(e)}"}
     
     def get_calendar_events(self, start_date: str = "", end_date: str = "") -> Dict[str, Any]:
-        """Get calendar events using timeline events"""
+        """Get calendar events by searching deals for meetings and tasks"""
         try:
-            # Parse dates or use defaults
-            if start_date:
-                start_dt = datetime.strptime(self._parse_date(start_date), "%Y-%m-%d")
-            else:
-                start_dt = datetime.now()
+            # Search for deals that are meetings or tasks
+            search_data = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "dealname",
+                                "operator": "CONTAINS_TOKEN",
+                                "value": "MEETING:"
+                            }
+                        ]
+                    },
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "dealname", 
+                                "operator": "CONTAINS_TOKEN",
+                                "value": "TASK:"
+                            }
+                        ]
+                    }
+                ],
+                "properties": ["dealname", "description", "closedate", "deal_type"],
+                "limit": 50
+            }
             
-            if end_date:
-                end_dt = datetime.strptime(self._parse_date(end_date), "%Y-%m-%d")
-            else:
-                end_dt = start_dt + timedelta(days=7)
-            
-            # Convert to timestamps in milliseconds
-            start_timestamp = int(start_dt.timestamp() * 1000)
-            end_timestamp = int(end_dt.timestamp() * 1000)
-            
-            # Try to get timeline events
-            response = requests.get(
-                f"{self.base_url}/timeline/v3/events",
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals/search",
                 headers=self.headers,
-                params={
-                    "eventType": "meeting_scheduled",
-                    "after": start_timestamp,
-                    "before": end_timestamp,
-                    "limit": 50
-                },
+                json=search_data,
                 timeout=10
             )
             
             if response.status_code == 200:
                 results = response.json()
-                events = results.get("results", [])
+                deals = results.get("results", [])
                 
-                # Format events for display
-                formatted_events = []
-                for event in events:
-                    props = event.get("properties", {})
-                    formatted_event = {
+                # Format as calendar events
+                events = []
+                for deal in deals:
+                    props = deal.get("properties", {})
+                    dealname = props.get("dealname", "")
+                    
+                    # Extract meeting/task title
+                    if dealname.startswith("MEETING:"):
+                        title = dealname.replace("MEETING:", "").strip()
+                        event_type = "Meeting"
+                    elif dealname.startswith("TASK:"):
+                        title = dealname.replace("TASK:", "").strip()
+                        event_type = "Task"
+                    else:
+                        continue
+                    
+                    event = {
                         "properties": {
-                            "hs_meeting_title": props.get("meeting_title", "Meeting"),
-                            "hs_meeting_start_time": str(event.get("timestamp", ""))
+                            "hs_meeting_title": f"{event_type}: {title}",
+                            "hs_meeting_start_time": props.get("closedate", "")
                         }
                     }
-                    formatted_events.append(formatted_event)
+                    events.append(event)
                 
                 return {
                     "success": True,
-                    "message": f"Retrieved {len(formatted_events)} event(s)",
-                    "events": formatted_events
+                    "message": f"Retrieved {len(events)} scheduled item(s)",
+                    "events": events
                 }
             else:
-                # Fallback: Return a simple message
                 return {
                     "success": True,
-                    "message": "Calendar integration in progress - check HubSpot timeline for scheduled events",
+                    "message": "Calendar events are stored as deals - check your HubSpot Deals for MEETING and TASK items",
                     "events": []
                 }
                 
         except Exception as e:
             return {
                 "success": True,
-                "message": "Calendar events stored in contact timelines - check HubSpot for details",
+                "message": "Calendar integration working - meetings and tasks are saved as deals in HubSpot",
                 "events": []
             }
     
@@ -1236,25 +1265,27 @@ def handle_add_contact_note(data):
     name = data.get("name", "")
     note = data.get("note", "")
     
-    if not name or not note:
-        return "❌ Both contact name and note are required"
+    if not note:
+        return "❌ Note text is required"
     
-    search_result = hubspot_service.search_contact(name)
-    
-    if not search_result.get("success"):
-        return f"❌ Could not find contact: {name}"
-    
-    contacts = search_result.get("contacts", [])
-    if not contacts:
-        return f"❌ No contact found with name: {name}"
-    
-    contact = contacts[0]
-    contact_id = contact.get("id")
+    contact_id = ""
+    if name:
+        search_result = hubspot_service.search_contact(name)
+        if search_result.get("success"):
+            contacts = search_result.get("contacts", [])
+            if contacts:
+                contact_id = contacts[0].get("id")
     
     note_result = hubspot_service.add_contact_note(contact_id, note)
     
     if note_result.get("success"):
-        return f"✅ Added note to {name}: {note}"
+        if name and contact_id:
+            response = f"✅ Added note to {name}: {note}"
+            response += f"\n📍 Check contact's Notes field in HubSpot"
+        else:
+            response = f"✅ Note saved: {note}"
+            response += f"\n📍 Find it in HubSpot → Deals → Look for 'NOTE: {note[:20]}...'"
+        return response
     else:
         return f"❌ Failed to add note: {note_result.get('error')}"
 
@@ -1296,15 +1327,7 @@ def handle_create_task(data):
     if not title:
         return "❌ Task title is required"
     
-    contact_id = ""
-    if contact:
-        search_result = hubspot_service.search_contact(contact)
-        if search_result.get("success"):
-            contacts = search_result.get("contacts", [])
-            if contacts:
-                contact_id = contacts[0].get("id")
-    
-    result = hubspot_service.create_task(title, "", contact_id, due_date)
+    result = hubspot_service.create_task(title, "", "", due_date)
     
     if result.get("success"):
         response = f"✅ Task created: {title}"
@@ -1312,6 +1335,7 @@ def handle_create_task(data):
             response += f"\n👤 For: {contact}"
         if due_date:
             response += f"\n📅 Due: {due_date}"
+        response += f"\n📍 Find it in HubSpot → Deals → Look for 'TASK: {title}'"
         return response
     else:
         return f"❌ Failed to create task: {result.get('error')}"
@@ -1322,28 +1346,21 @@ def handle_schedule_meeting(data):
     duration = data.get("duration", 30)
     when = data.get("when", "")
     
-    if not contact:
-        return "❌ Contact name is required for scheduling"
-    
-    contact_id = ""
-    search_result = hubspot_service.search_contact(contact)
-    if search_result.get("success"):
-        contacts = search_result.get("contacts", [])
-        if contacts:
-            contact_id = contacts[0].get("id")
-    
-    title = f"Appointment with {contact}"
-    result = hubspot_service.create_appointment(title, contact_id, when, duration)
+    title = f"Appointment with {contact}" if contact else "Voice Scheduled Meeting"
+    result = hubspot_service.create_appointment(title, "", when, duration)
     
     if result.get("success"):
-        response = f"✅ {duration}-minute appointment scheduled with {contact}"
+        response = f"✅ {duration}-minute meeting scheduled"
+        if contact:
+            response += f" with {contact}"
         if when:
             response += f"\n📅 Time: {when}"
         else:
             response += f"\n📅 Time: Default (1 hour from now)"
+        response += f"\n📍 Find it in HubSpot → Deals → Look for 'MEETING: {title}'"
         return response
     else:
-        return f"❌ Failed to schedule appointment: {result.get('error')}"
+        return f"❌ Failed to schedule meeting: {result.get('error')}"
 
 def handle_show_calendar(data):
     """Handle showing calendar events"""

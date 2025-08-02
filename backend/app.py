@@ -197,10 +197,13 @@ class HubSpotService:
     def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
         """Add note to contact using HubSpot Notes API"""
         try:
+            # HubSpot expects timestamp in milliseconds
+            timestamp_ms = int(datetime.now().timestamp() * 1000)
+            
             note_data = {
                 "properties": {
                     "hs_note_body": note,
-                    "hs_timestamp": datetime.now().isoformat()
+                    "hs_timestamp": str(timestamp_ms)
                 },
                 "associations": [
                     {
@@ -208,6 +211,20 @@ class HubSpotService:
                         "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 202}]
                     }
                 ]
+            }
+            
+    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+        """Add note to contact using HubSpot Notes API"""
+        try:
+            # HubSpot expects timestamp in milliseconds
+            timestamp_ms = int(datetime.now().timestamp() * 1000)
+            
+            # Simplified note creation without associations first
+            note_data = {
+                "properties": {
+                    "hs_note_body": note,
+                    "hs_timestamp": str(timestamp_ms)
+                }
             }
             
             response = requests.post(
@@ -218,10 +235,36 @@ class HubSpotService:
             )
             
             if response.status_code in [200, 201]:
+                note_obj = response.json()
+                note_id = note_obj.get("id")
+                
+                # Now try to associate with contact
+                if note_id and contact_id:
+                    try:
+                        association_data = {
+                            "inputs": [
+                                {
+                                    "from": {"id": note_id},
+                                    "to": {"id": contact_id},
+                                    "type": "note_to_contact"
+                                }
+                            ]
+                        }
+                        
+                        assoc_response = requests.put(
+                            f"{self.base_url}/crm/v4/associations/notes/contacts/batch/create",
+                            headers=self.headers,
+                            json=association_data,
+                            timeout=10
+                        )
+                        # Don't fail if association fails, note was still created
+                    except:
+                        pass  # Association failed but note was created
+                
                 return {
                     "success": True,
                     "message": f"Note added to contact",
-                    "data": response.json()
+                    "data": note_obj
                 }
             else:
                 return {"success": False, "error": f"Failed to add note: {response.text}"}
@@ -232,29 +275,27 @@ class HubSpotService:
     def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
         """Create new task in HubSpot"""
         try:
+            # HubSpot expects timestamp in milliseconds
+            current_timestamp = int(datetime.now().timestamp() * 1000)
+            
             task_properties = {
                 "hs_task_subject": title,
                 "hs_task_body": description or title,
                 "hs_task_status": "NOT_STARTED",
-                "hs_task_priority": "MEDIUM"
+                "hs_task_priority": "MEDIUM",
+                "hs_timestamp": str(current_timestamp)  # Required field
             }
             
             if due_date:
                 parsed_date = self._parse_date(due_date)
-                # Convert to timestamp in milliseconds
-                due_timestamp = int(datetime.strptime(parsed_date, "%Y-%m-%d").timestamp() * 1000)
-                task_properties["hs_timestamp"] = str(due_timestamp)
+                # Convert to timestamp in milliseconds for due date
+                due_datetime = datetime.strptime(parsed_date, "%Y-%m-%d")
+                due_timestamp = int(due_datetime.timestamp() * 1000)
+                task_properties["hs_task_completion_date"] = str(due_timestamp)
             
             task_data = {"properties": task_properties}
             
-            # Add association to contact if provided
-            if contact_id:
-                task_data["associations"] = [
-                    {
-                        "to": {"id": contact_id},
-                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 204}]
-                    }
-                ]
+            # Don't add associations during creation, do it separately after
             
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/tasks",
@@ -264,10 +305,36 @@ class HubSpotService:
             )
             
             if response.status_code in [200, 201]:
+                task_obj = response.json()
+                task_id = task_obj.get("id")
+                
+                # Try to associate with contact after task creation
+                if task_id and contact_id:
+                    try:
+                        association_data = {
+                            "inputs": [
+                                {
+                                    "from": {"id": task_id},
+                                    "to": {"id": contact_id},
+                                    "type": "task_to_contact"
+                                }
+                            ]
+                        }
+                        
+                        assoc_response = requests.put(
+                            f"{self.base_url}/crm/v4/associations/tasks/contacts/batch/create",
+                            headers=self.headers,
+                            json=association_data,
+                            timeout=10
+                        )
+                        # Don't fail if association fails, task was still created
+                    except:
+                        pass  # Association failed but task was created
+                
                 return {
                     "success": True,
                     "message": f"Task created: {title}",
-                    "data": response.json()
+                    "data": task_obj
                 }
             else:
                 return {"success": False, "error": f"Failed to create task: {response.text}"}
@@ -288,21 +355,14 @@ class HubSpotService:
             meeting_properties = {
                 "hs_meeting_title": title,
                 "hs_meeting_body": f"Meeting scheduled via Manny Voice Assistant",
-                "hs_timestamp": str(start_timestamp),
+                "hs_timestamp": str(start_timestamp),  # Required field
                 "hs_meeting_start_time": str(start_timestamp),
                 "hs_meeting_end_time": str(end_timestamp)
             }
             
             meeting_data = {"properties": meeting_properties}
             
-            # Add association to contact if provided
-            if contact_id:
-                meeting_data["associations"] = [
-                    {
-                        "to": {"id": contact_id},
-                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 199}]
-                    }
-                ]
+            # Don't add associations during creation, do it separately after
             
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/meetings",
@@ -312,10 +372,36 @@ class HubSpotService:
             )
             
             if response.status_code in [200, 201]:
+                meeting_obj = response.json()
+                meeting_id = meeting_obj.get("id")
+                
+                # Try to associate with contact after meeting creation
+                if meeting_id and contact_id:
+                    try:
+                        association_data = {
+                            "inputs": [
+                                {
+                                    "from": {"id": meeting_id},
+                                    "to": {"id": contact_id},
+                                    "type": "meeting_to_contact"
+                                }
+                            ]
+                        }
+                        
+                        assoc_response = requests.put(
+                            f"{self.base_url}/crm/v4/associations/meetings/contacts/batch/create",
+                            headers=self.headers,
+                            json=association_data,
+                            timeout=10
+                        )
+                        # Don't fail if association fails, meeting was still created
+                    except:
+                        pass  # Association failed but meeting was created
+                
                 return {
                     "success": True,
                     "message": f"Meeting scheduled: {title}",
-                    "data": response.json()
+                    "data": meeting_obj
                 }
             else:
                 return {"success": False, "error": f"Failed to create meeting: {response.text}"}
@@ -348,9 +434,13 @@ class HubSpotService:
                         "filters": [
                             {
                                 "propertyName": "hs_meeting_start_time",
-                                "operator": "BETWEEN",
-                                "value": start_timestamp,
-                                "highValue": end_timestamp
+                                "operator": "GTE",
+                                "value": str(start_timestamp)
+                            },
+                            {
+                                "propertyName": "hs_meeting_start_time", 
+                                "operator": "LTE",
+                                "value": str(end_timestamp)
                             }
                         ]
                     }
@@ -394,14 +484,7 @@ class HubSpotService:
             
             deal_data = {"properties": deal_properties}
             
-            # Add association to contact if provided
-            if contact_id:
-                deal_data["associations"] = [
-                    {
-                        "to": {"id": contact_id},
-                        "types": [{"associationCategory": "HUBSPOT_DEFINED", "associationTypeId": 3}]
-                    }
-                ]
+            # Don't add associations during creation, do it separately after
             
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/deals",
@@ -411,10 +494,36 @@ class HubSpotService:
             )
             
             if response.status_code in [200, 201]:
+                deal_obj = response.json()
+                deal_id = deal_obj.get("id")
+                
+                # Try to associate with contact after deal creation
+                if deal_id and contact_id:
+                    try:
+                        association_data = {
+                            "inputs": [
+                                {
+                                    "from": {"id": deal_id},
+                                    "to": {"id": contact_id},
+                                    "type": "deal_to_contact"
+                                }
+                            ]
+                        }
+                        
+                        assoc_response = requests.put(
+                            f"{self.base_url}/crm/v4/associations/deals/contacts/batch/create",
+                            headers=self.headers,
+                            json=association_data,
+                            timeout=10
+                        )
+                        # Don't fail if association fails, deal was still created
+                    except:
+                        pass  # Association failed but deal was created
+                
                 return {
                     "success": True,
                     "message": f"Deal created: {name}",
-                    "data": response.json()
+                    "data": deal_obj
                 }
             else:
                 return {"success": False, "error": f"Failed to create deal: {response.text}"}

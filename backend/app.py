@@ -700,7 +700,7 @@ class EmailClient:
 # ==================== CRM COMMAND EXTRACTORS (FIXED) ====================
 
 def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract CRM contact commands from voice text - FIXED VERSION"""
+    """Extract CRM contact commands from voice text - SIMPLIFIED & FIXED VERSION"""
     text_lower = text.lower().strip()
     
     # Create new contact
@@ -725,30 +725,36 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
                 "company": company
             }
     
-    # Update contact phone number - FIXED PATTERNS
-    phone_update_patterns = [
-        # Pattern 1: "update contact [name] phone number [number]"
-        r'update (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(to )?(.+)',
-        # Pattern 2: "change contact [name] phone to [number]"
-        r'change (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(to )?(.+)',
-        # Pattern 3: "set [name] phone number to [number]"
-        r'set (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(?:to )?(.+)',
-        # Pattern 4: "update [name]'s phone to [number]"
-        r'update (.+?)(?:\'s)\s+phone (?:to )?(.+)'
-    ]
-    
-    for pattern in phone_update_patterns:
+    # Update contact phone number - SIMPLIFIED PATTERNS
+    if "update" in text_lower and "phone" in text_lower:
+        # Try to extract name and phone from the update command
+        # Pattern: "update contact [name] phone number [number]"
+        pattern = r'update.*?contact\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
         match = re.search(pattern, text_lower)
+        
         if match:
             name = match.group(1).strip()
-            # Handle cases where "to" is captured as a group
-            if match.lastindex >= 4:  # 4 groups (including optional "to")
-                phone = match.group(4).strip()
-            else:  # 3 groups (no "to" group)
-                phone = match.group(2).strip()
+            phone = match.group(2).strip()
             
-            # Clean up the name - remove common words that might get included
-            name = re.sub(r'\b(contact|phone|number)\b', '', name).strip()
+            # Clean up the name - remove extra words
+            name = re.sub(r'\b(phone|number|to)\b', '', name).strip()
+            
+            return {
+                "action": "update_contact_phone",
+                "name": name,
+                "phone": phone
+            }
+        
+        # Fallback pattern: "update [name] phone number [number]"
+        pattern2 = r'update\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
+        match2 = re.search(pattern2, text_lower)
+        
+        if match2:
+            name = match2.group(1).strip()
+            phone = match2.group(2).strip()
+            
+            # Clean up the name
+            name = re.sub(r'\b(contact|phone|number|to)\b', '', name).strip()
             
             return {
                 "action": "update_contact_phone",
@@ -1249,37 +1255,53 @@ def handle_create_contact(data):
         return f"❌ Failed to create contact: {result.get('error')}"
 
 def handle_update_contact_phone(data):
-    """Handle updating contact phone number - ENHANCED VERSION"""
-    name = data.get("name", "")
-    phone = data.get("phone", "")
+    """Handle updating contact phone number - SIMPLIFIED & SAFE VERSION"""
+    try:
+        name = data.get("name", "").strip()
+        phone = data.get("phone", "").strip()
+        
+        if not name or not phone:
+            return "❌ Both contact name and phone number are required"
+        
+        print(f"🔍 Searching for contact: '{name}'")
+        
+        # Search for contact
+        search_result = hubspot_service.search_contact(name)
+        
+        if not search_result or not search_result.get("success"):
+            return f"❌ Could not find contact: {name}. Try creating a new contact instead."
+        
+        contacts = search_result.get("contacts", [])
+        if not contacts:
+            return f"❌ No contact found with name: {name}. Try: 'Hey Manny create contact {name} phone {phone}'"
+        
+        # Use the first contact found
+        contact = contacts[0]
+        contact_id = contact.get("id")
+        
+        if not contact_id:
+            return f"❌ Invalid contact data for: {name}"
+        
+        # Get contact name for response
+        contact_props = contact.get("properties", {})
+        current_name = f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
+        if not current_name:
+            current_name = name
+        
+        print(f"✅ Found contact: {current_name} (ID: {contact_id})")
+        
+        # Update the contact
+        update_result = hubspot_service.update_contact(contact_id, {"phone": phone})
+        
+        if update_result and update_result.get("success"):
+            return f"✅ Updated {current_name}'s phone number to {phone}"
+        else:
+            error_msg = update_result.get("error", "Unknown error") if update_result else "No response from HubSpot"
+            return f"❌ Failed to update phone for {current_name}: {error_msg}"
     
-    if not name or not phone:
-        return "❌ Both contact name and phone number are required"
-    
-    print(f"🔍 Searching for contact: '{name}'")
-    search_result = hubspot_service.search_contact(name)
-    
-    if not search_result.get("success"):
-        return f"❌ Could not find contact: {name}. Try: 'create contact {name} phone {phone}' to add as new contact."
-    
-    contacts = search_result.get("contacts", [])
-    if not contacts:
-        return f"❌ No contact found with name: {name}. Would you like me to create a new contact instead?"
-    
-    # If multiple contacts found, use the first one (or could implement selection logic)
-    contact = contacts[0]
-    contact_id = contact.get("id")
-    contact_props = contact.get("properties", {})
-    current_name = f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
-    
-    print(f"✅ Found contact: {current_name} (ID: {contact_id})")
-    
-    update_result = hubspot_service.update_contact(contact_id, {"phone": phone})
-    
-    if update_result.get("success"):
-        return f"✅ Updated {current_name}'s phone number to {phone}"
-    else:
-        return f"❌ Failed to update phone for {current_name}: {update_result.get('error')}"
+    except Exception as e:
+        print(f"❌ Error in handle_update_contact_phone: {str(e)}")
+        return f"❌ Error updating contact: {str(e)}"
 
 def handle_add_contact_note(data):
     """Handle adding note to contact"""
@@ -1635,7 +1657,7 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny create contact John Smith" or "Hey Manny update contact Manuel Stagg phone number 555-1234"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny update contact Manuel Stagg phone number 555-1234"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
             <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey Manny" if missing</small>

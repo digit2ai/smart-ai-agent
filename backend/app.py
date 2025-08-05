@@ -697,10 +697,10 @@ class EmailClient:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
 
-# ==================== CRM COMMAND EXTRACTORS ====================
+# ==================== CRM COMMAND EXTRACTORS (FIXED) ====================
 
 def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract CRM contact commands from voice text"""
+    """Extract CRM contact commands from voice text - FIXED VERSION"""
     text_lower = text.lower().strip()
     
     # Create new contact
@@ -725,17 +725,30 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
                 "company": company
             }
     
-    # Update contact phone number
+    # Update contact phone number - FIXED PATTERNS
     phone_update_patterns = [
-        r'update (.+?)(?:\'s)?\s+phone (?:number )?to (.+)',
-        r'change (.+?)(?:\'s)?\s+phone (?:number )?to (.+)'
+        # Pattern 1: "update contact [name] phone number [number]"
+        r'update (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(to )?(.+)',
+        # Pattern 2: "change contact [name] phone to [number]"
+        r'change (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(to )?(.+)',
+        # Pattern 3: "set [name] phone number to [number]"
+        r'set (?:contact )?(.+?)(?:\'s)?\s+phone (?:number )?(?:to )?(.+)',
+        # Pattern 4: "update [name]'s phone to [number]"
+        r'update (.+?)(?:\'s)\s+phone (?:to )?(.+)'
     ]
     
     for pattern in phone_update_patterns:
         match = re.search(pattern, text_lower)
         if match:
             name = match.group(1).strip()
-            phone = match.group(2).strip()
+            # Handle cases where "to" is captured as a group
+            if match.lastindex >= 4:  # 4 groups (including optional "to")
+                phone = match.group(4).strip()
+            else:  # 3 groups (no "to" group)
+                phone = match.group(2).strip()
+            
+            # Clean up the name - remove common words that might get included
+            name = re.sub(r'\b(contact|phone|number)\b', '', name).strip()
             
             return {
                 "action": "update_contact_phone",
@@ -764,7 +777,9 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
     # Search contact
     search_patterns = [
         r'show (?:me )?(.+?)(?:\'s)?\s+(?:contact )?(?:details|info|information)',
-        r'find contact (?:for )?(.+)'
+        r'find contact (?:for )?(.+)',
+        r'search (?:for )?contact (.+)',
+        r'lookup (.+?)(?:\'s)?\s+(?:contact )?(?:details|info)'
     ]
     
     for pattern in search_patterns:
@@ -1234,31 +1249,37 @@ def handle_create_contact(data):
         return f"❌ Failed to create contact: {result.get('error')}"
 
 def handle_update_contact_phone(data):
-    """Handle updating contact phone number"""
+    """Handle updating contact phone number - ENHANCED VERSION"""
     name = data.get("name", "")
     phone = data.get("phone", "")
     
     if not name or not phone:
         return "❌ Both contact name and phone number are required"
     
+    print(f"🔍 Searching for contact: '{name}'")
     search_result = hubspot_service.search_contact(name)
     
     if not search_result.get("success"):
-        return f"❌ Could not find contact: {name}"
+        return f"❌ Could not find contact: {name}. Try: 'create contact {name} phone {phone}' to add as new contact."
     
     contacts = search_result.get("contacts", [])
     if not contacts:
-        return f"❌ No contact found with name: {name}"
+        return f"❌ No contact found with name: {name}. Would you like me to create a new contact instead?"
     
+    # If multiple contacts found, use the first one (or could implement selection logic)
     contact = contacts[0]
     contact_id = contact.get("id")
+    contact_props = contact.get("properties", {})
+    current_name = f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
+    
+    print(f"✅ Found contact: {current_name} (ID: {contact_id})")
     
     update_result = hubspot_service.update_contact(contact_id, {"phone": phone})
     
     if update_result.get("success"):
-        return f"✅ Updated {name}'s phone number to {phone}"
+        return f"✅ Updated {current_name}'s phone number to {phone}"
     else:
-        return f"❌ Failed to update phone: {update_result.get('error')}"
+        return f"❌ Failed to update phone for {current_name}: {update_result.get('error')}"
 
 def handle_add_contact_note(data):
     """Handle adding note to contact"""
@@ -1578,6 +1599,7 @@ def get_html_template():
                     <li>"Hey Manny create contact John Smith email john@test.com"</li>
                     <li>"Hey Manny add note to client ABC saying discussed pricing"</li>
                     <li>"Hey Manny show me Sarah's contact details"</li>
+                    <li>"Hey Manny update contact Manuel Stagg phone number 555-1234"</li>
                 </ul>
             </div>
             <div class="capability-section">
@@ -1613,7 +1635,7 @@ def get_html_template():
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny create contact John Smith" or "Hey Manny text 555-1234 saying hello"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey Manny create contact John Smith" or "Hey Manny update contact Manuel Stagg phone number 555-1234"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
             <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey Manny" if missing</small>
@@ -2143,6 +2165,7 @@ if __name__ == '__main__':
     print("   📱 SMS: 'Hey Manny text John saying hello'")
     print("   📧 Email: 'Hey Manny email client@company.com saying proposal ready'")
     print("   👥 Contacts: 'Hey Manny create contact John Smith email john@test.com'")
+    print("   🔄 Update: 'Hey Manny update contact Manuel Stagg phone number 555-1234'")
     print("   📋 Tasks: 'Hey Manny create task to follow up with prospects'")
     print("   📅 Calendar: 'Hey Manny schedule meeting with new lead tomorrow'")
     print("   📊 Pipeline: 'Hey Manny show me this month's sales pipeline status'")

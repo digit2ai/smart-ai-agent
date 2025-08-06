@@ -946,22 +946,22 @@ class WakeWordProcessor:
         }
     
     def process_wake_word_command(self, text: str) -> Dict[str, Any]:
-        """Enhanced process_wake_word_command with CRM support"""
-        wake_result = self.detect_wake_word(text)
+        """Process command directly without wake word requirement"""
+        command_text = text.strip()
         
-        if not wake_result["has_wake_word"]:
+        if not command_text:
             return {
                 "success": False,
-                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word} text John saying hello'"
+                "error": "Please provide a command. Example: 'text John saying hello' or 'create contact John Smith'"
             }
         
-        command_text = wake_result["command_text"]
-        
-        if not command_text.strip():
-            return {
-                "success": False,
-                "error": f"Please provide a command after '{wake_result['wake_word_detected']}'"
-            }
+        # Create fake wake result for compatibility
+        wake_result = {
+            "has_wake_word": True,
+            "wake_word_detected": "none_required",
+            "command_text": command_text,
+            "original_text": text
+        }
         
         # Try SMS command
         sms_command = extract_sms_command(command_text)
@@ -1666,32 +1666,32 @@ def get_html_template():
             <div class="capability-section">
                 <h4>📱 Communication</h4>
                 <ul>
-                    <li>"Hey CRMAutoPilot text John saying meeting at 3pm"</li>
-                    <li>"Hey CRMAutoPilot email client@company.com saying proposal attached"</li>
+                    <li>"text John saying meeting at 3pm"</li>
+                    <li>"email client@company.com saying proposal attached"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>👥 HubSpot Contacts</h4>
                 <ul>
-                    <li>"Hey CRMAutoPilot create contact John Smith email john@test.com"</li>
-                    <li>"Hey CRMAutoPilot add note to client ABC saying discussed pricing"</li>
-                    <li>"Hey CRMAutoPilot show me Sarah's contact details"</li>
-                    <li>"Hey CRMAutoPilot update contact Manuel Stagg phone number 555-1234"</li>
+                    <li>"create contact John Smith email john@test.com"</li>
+                    <li>"add note to client ABC saying discussed pricing"</li>
+                    <li>"show me Sarah's contact details"</li>
+                    <li>"update contact Manuel Stagg phone number 555-1234"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📋 Tasks & Calendar</h4>
                 <ul>
-                    <li>"Hey CRMAutoPilot create task to follow up with prospects"</li>
-                    <li>"Hey CRMAutoPilot schedule 30-minute meeting with new lead tomorrow"</li>
-                    <li>"Hey CRMAutoPilot show my meetings for this week"</li>
+                    <li>"create task to follow up with prospects"</li>
+                    <li>"schedule 30-minute meeting with new lead tomorrow"</li>
+                    <li>"show my meetings for this week"</li>
                 </ul>
             </div>
             <div class="capability-section">
                 <h4>📊 Sales Pipeline</h4>
                 <ul>
-                    <li>"Hey CRMAutoPilot create deal for XYZ Company worth $25,000"</li>
-                    <li>"Hey CRMAutoPilot show me this month's sales pipeline status"</li>
+                    <li>"create deal for XYZ Company worth $25,000"</li>
+                    <li>"show me this month's sales pipeline status"</li>
                 </ul>
             </div>
         </div>
@@ -1706,19 +1706,19 @@ def get_html_template():
         </div>
         <div class="transcription" id="transcription">
             <h3>🎤 Voice Transcription</h3>
-            <div class="transcription-text" id="transcriptionText">Waiting for wake word command...</div>
+            <div class="transcription-text" id="transcriptionText">Ready for commands...</div>
         </div>
         <div id="response" class="response"></div>
         <div class="manual-input">
             <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey CRMAutoPilot update contact Manuel Stagg phone number 555-1234"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "text John saying hello" or "create contact John Smith"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey CRMAutoPilot" if missing</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Direct commands supported | SMS, Email & HubSpot CRM operations</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. HubSpot CRM data is securely handled via encrypted APIs.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is processed directly for commands. HubSpot CRM data is securely handled via encrypted APIs.</div>
     </div>
 
     <script>
@@ -1774,7 +1774,7 @@ def get_html_template():
                     retryCount = 0;
                     lastError = null;
                     shouldStop = false;
-                    updateUI('listening', '🎤 Listening for "Hey CRMAutoPilot"...', '👂');
+                    updateUI('listening', '🎤 Listening for commands...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -2056,7 +2056,7 @@ def get_html_template():
             updateUI('idle', 'Stopped listening', '🎤');
             startButton.disabled = false;
             stopButton.disabled = true;
-            transcriptionText.textContent = 'Waiting for wake word command...';
+            transcriptionText.textContent = 'Ready for commands...';
             transcription.classList.remove('active');
             commandBuffer = '';
             

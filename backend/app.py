@@ -1,5 +1,5 @@
 # Enhanced Flask Wake Word App - SMS, Email, CRM & RCS with HubSpot Integration
-# Complete CRMAutoPilot with Twilio RCS Support
+# Complete CRMAutoPilot with Twilio RCS Support - FULLY FIXED VERSION
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -914,7 +914,7 @@ class EmailClient:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
 
-# ==================== COMMAND EXTRACTORS ====================
+# ==================== FIXED COMMAND EXTRACTORS ====================
 
 def extract_rcs_command(text: str) -> Optional[Dict[str, Any]]:
     """Extract RCS-specific commands from voice text"""
@@ -958,7 +958,7 @@ def extract_rcs_command(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract CRM contact commands from voice text - FIXED VERSION"""
+    """Extract CRM contact commands from voice text - FULLY FIXED VERSION"""
     text_lower = text.lower().strip()
     
     # FIXED: Search patterns MUST come BEFORE create patterns
@@ -969,12 +969,16 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
         r'search (?:for )?contact (.+)',
         r'lookup (.+?)(?:\'s)?\s+(?:contact )?(?:details|info)',
         r'search contact (.+)',
+        r'lookup (.+)',  # Added simple lookup pattern
+        r'find (.+)',    # Added simple find pattern
     ]
     
     for pattern in search_patterns:
         match = re.search(pattern, text_lower)
         if match:
             name = match.group(1).strip()
+            # Clean up the name
+            name = name.replace("contact", "").strip()
             
             return {
                 "action": "search_contact",
@@ -995,6 +999,9 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
             phone = match.group(3).strip() if match.group(3) else ""
             company = match.group(4).strip() if match.group(4) else ""
             
+            # Clean up extracted values
+            name = name.replace("with email", "").replace("email", "").strip()
+            
             return {
                 "action": "create_contact",
                 "name": name,
@@ -1003,10 +1010,27 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
                 "company": company
             }
     
+    # Update contact email - NEW PATTERN
+    if "update" in text_lower and "email" in text_lower:
+        pattern = r'(?:update|change)\s+(?:contact\s+)?(.+?)\s+email(?:\s+to)?\s+(.+)'
+        match = re.search(pattern, text_lower)
+        
+        if match:
+            name = match.group(1).strip()
+            email = match.group(2).strip()
+            
+            # Clean up the name
+            name = name.replace("contact", "").strip()
+            
+            return {
+                "action": "update_contact_email",
+                "name": name,
+                "email": email
+            }
+    
     # Update contact phone number - SIMPLIFIED PATTERNS
     if "update" in text_lower and "phone" in text_lower:
         # Try to extract name and phone from the update command
-        # Pattern: "update contact [name] phone number [number]"
         pattern = r'update.*?contact\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
         match = re.search(pattern, text_lower)
         
@@ -1022,27 +1046,27 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
                 "name": name,
                 "phone": phone
             }
+    
+    # Update contact company - NEW PATTERN
+    if "update" in text_lower and "company" in text_lower:
+        pattern = r'update\s+(?:contact\s+)?(.+?)\s+company(?:\s+to)?\s+(.+)'
+        match = re.search(pattern, text_lower)
         
-        # Fallback pattern: "update [name] phone number [number]"
-        pattern2 = r'update\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
-        match2 = re.search(pattern2, text_lower)
-        
-        if match2:
-            name = match2.group(1).strip()
-            phone = match2.group(2).strip()
-            
-            # Clean up the name
-            name = re.sub(r'\b(contact|phone|number|to)\b', '', name).strip()
+        if match:
+            name = match.group(1).strip()
+            company = match.group(2).strip()
             
             return {
-                "action": "update_contact_phone",
+                "action": "update_contact_company",
                 "name": name,
-                "phone": phone
+                "company": company
             }
     
-    # Add note to contact patterns (FIXED: These were being parsed as tasks)
+    # Add note to contact patterns
     note_patterns = [
         r'add note to (?:contact )?(.+?) saying (.+)',
+        r'annotate (.+?) with (.+)',  # Fixed annotate pattern
+        r'add comment to (.+?) saying (.+)',  # Fixed comment pattern
         r'note (?:for )?(?:contact )?(.+?) (?:saying |that )?(.+)'
     ]
     
@@ -1061,30 +1085,39 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def extract_crm_task_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract CRM task commands from voice text - FIXED VERSION"""
+    """Extract CRM task commands from voice text - FULLY FIXED VERSION"""
     text_lower = text.lower().strip()
     
-    # FIXED: Better task title extraction
+    # Create task patterns - IMPROVED
     create_patterns = [
-        r'create task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$',
-        r'add task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$'
+        r'(?:create|add) (?:a )?(?:task|reminder|todo|follow-up task) (.+?)(?:\s+for\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$',
+        r'schedule task (.+?)(?:\s+for\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$'
     ]
     
     for pattern in create_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            # FIXED: Get the full task description, not just first word
-            full_match = match.group(1).strip()
-            
-            # Extract task title (everything before 'for', 'with', 'due', or 'by')
-            title_match = re.match(r'^(.+?)(?:\s+(?:for|with|due|by)\s+.*)?$', full_match)
-            if title_match:
-                title = title_match.group(1).strip()
-            else:
-                title = full_match
-            
+            # Extract the full task string
+            full_text = match.group(1).strip()
             contact = match.group(2).strip() if match.group(2) else ""
             due_date = match.group(3).strip() if match.group(3) else ""
+            
+            # Parse the task title more carefully
+            # Remove "to" at the beginning if present
+            if full_text.startswith("to "):
+                full_text = full_text[3:].strip()
+            
+            # If task contains "for", split it
+            if " for " in full_text and not contact:
+                parts = full_text.split(" for ", 1)
+                title = parts[0].strip()
+                contact = parts[1].strip()
+            else:
+                title = full_text
+            
+            # Clean up contact name - remove "to" if it got included
+            if contact.startswith("to "):
+                contact = contact[3:].strip()
             
             return {
                 "action": "create_task",
@@ -1190,7 +1223,7 @@ def fix_email_addresses(text: str) -> str:
     return fixed_text
 
 def extract_email_command(text: str) -> Dict[str, Any]:
-    """Extract email command from text - FIXED VERSION"""
+    """Extract email command from text - FULLY FIXED VERSION"""
     original_text = text
     fixed_text = fix_email_addresses(text)
     
@@ -1199,9 +1232,12 @@ def extract_email_command(text: str) -> Dict[str, Any]:
     
     patterns = [
         r'email (.+?) (?:with )?subject (.+?) saying (.+)',
-        r'email (.+?) saying (.+)',
         r'send (?:an )?email to (.+?) (?:with )?subject (.+?) saying (.+)',
-        r'send (?:an )?email to (.+?) saying (.+)',
+        r'send (?:an )?email to (.+?) (?:about|regarding) (.+)',  # Added about/regarding pattern
+        r'compose email to (.+?) (?:regarding|about) (.+)',  # Added compose pattern
+        r'email (.+?) subject (.+?) saying (.+)',  # Direct email pattern
+        r'email (.+?) saying (.+)',  # Simple email pattern
+        r'send (?:an )?email to (.+?) saying (.+)',  # Simple send email pattern
     ]
     
     text_lower = fixed_text.lower().strip()
@@ -1213,13 +1249,29 @@ def extract_email_command(text: str) -> Dict[str, Any]:
                 recipient = match.group(1).strip()
                 subject = match.group(2).strip()
                 message = match.group(3).strip()
-            else:
+            elif len(match.groups()) == 2:
                 recipient = match.group(1).strip()
-                subject = "Voice Command Message"
-                message = match.group(2).strip()
+                
+                # Check if second group is a subject (for about/regarding patterns)
+                if "about" in pattern or "regarding" in pattern:
+                    subject = match.group(2).strip()
+                    message = f"Please find information regarding {subject}"
+                else:
+                    subject = "Voice Command Message"
+                    message = match.group(2).strip()
             
-            # FIXED: Clean up recipient to remove extra words
+            # Clean up recipient to remove extra words
             recipient = recipient.replace("to ", "").strip()
+            
+            # Check if recipient is a name that needs lookup
+            if not is_email_address(recipient):
+                # This is a contact name, needs lookup
+                return {
+                    "action": "send_email_to_contact",
+                    "contact_name": recipient,
+                    "subject": subject,
+                    "message": message
+                }
             
             message = message.replace(" period", ".").replace(" comma", ",")
             subject = subject.replace(" period", ".").replace(" comma", ",")
@@ -1234,14 +1286,14 @@ def extract_email_command(text: str) -> Dict[str, Any]:
     return None
 
 def extract_sms_command(text: str) -> Dict[str, Any]:
-    """Extract SMS command from text - FIXED VERSION"""
+    """Extract SMS command from text - FULLY FIXED VERSION"""
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
         r'text (.+?) saying (.+)',
-        r'message (.+?) saying (.+)',
+        r'message (.+?) (?:saying|with) (.+)',  # Fixed to handle "with"
+        r'sms (.+?) saying (.+)',  # Added SMS pattern
         r'send (.+?) the message (.+)',
         r'tell (.+?) that (.+)',
-        r'text (.+?) (.+)',
     ]
     
     text_lower = text.lower().strip()
@@ -1254,7 +1306,7 @@ def extract_sms_command(text: str) -> Dict[str, Any]:
             
             message = message.replace(" period", ".").replace(" comma", ",")
             
-            # NEW: Check if recipient is a contact name (not a phone number)
+            # Check if recipient is a contact name (not a phone number)
             if not is_phone_number(recipient) and not is_email_address(recipient):
                 # Mark this as requiring contact lookup
                 return {
@@ -1349,7 +1401,7 @@ class WakeWordProcessor:
         }
     
     def process_wake_word_command(self, text: str) -> Dict[str, Any]:
-        """Process command directly without wake word requirement"""
+        """Process command with improved pattern matching"""
         command_text = text.strip()
         
         if not command_text:
@@ -1373,19 +1425,7 @@ class WakeWordProcessor:
             print(f"📱 RCS command: {rcs_command.get('action')}")
             return rcs_command
         
-        # Try SMS command
-        sms_command = extract_sms_command(command_text)
-        if sms_command:
-            sms_command["wake_word_info"] = wake_result
-            return sms_command
-        
-        # Try email command
-        email_command = extract_email_command(command_text)
-        if email_command:
-            email_command["wake_word_info"] = wake_result
-            return email_command
-        
-        # Try CRM contact commands
+        # Try CRM contact commands BEFORE SMS/Email (for better lookup/search detection)
         contact_command = extract_crm_contact_command(command_text)
         if contact_command:
             contact_command["wake_word_info"] = wake_result
@@ -1412,6 +1452,18 @@ class WakeWordProcessor:
             pipeline_command["wake_word_info"] = wake_result
             print(f"📊 CRM Pipeline command: {pipeline_command.get('action')}")
             return pipeline_command
+        
+        # Try SMS command
+        sms_command = extract_sms_command(command_text)
+        if sms_command:
+            sms_command["wake_word_info"] = wake_result
+            return sms_command
+        
+        # Try email command
+        email_command = extract_email_command(command_text)
+        if email_command:
+            email_command["wake_word_info"] = wake_result
+            return email_command
         
         # Fallback to Claude
         try:
@@ -1715,6 +1767,41 @@ def handle_send_email(data):
     else:
         return f"❌ Invalid email address: {recipient}"
 
+def handle_send_email_to_contact(data):
+    """Handle email sending to contact name"""
+    contact_name = data.get("contact_name", "")
+    subject = data.get("subject", "Voice Command Message")
+    message = data.get("message", "")
+    
+    if not contact_name:
+        return "❌ Contact name is required"
+    
+    # Search for contact to get email address
+    search_result = hubspot_service.search_contact(contact_name)
+    
+    if not search_result.get("success"):
+        return f"❌ Could not find contact: {contact_name}"
+    
+    contacts = search_result.get("contacts", [])
+    if not contacts:
+        return f"❌ No contact found with name: {contact_name}"
+    
+    # Get email from contact
+    contact = contacts[0]
+    contact_props = contact.get("properties", {})
+    email = contact_props.get("email", "")
+    
+    if not email:
+        return f"❌ No email address found for {contact_name}. Please update their contact with an email."
+    
+    # Send email
+    result = email_client.send_email(email, subject, message)
+    
+    if result.get("success"):
+        return f"✅ Email sent to {contact_name} ({email})!\n\nSubject: {subject}\nMessage: {message}"
+    else:
+        return f"❌ Failed to send email to {contact_name} ({email}): {result.get('error')}"
+
 def handle_create_contact(data):
     """Handle creating new contact in HubSpot"""
     name = data.get("name", "")
@@ -1802,6 +1889,89 @@ def handle_update_contact_phone(data):
     
     except Exception as e:
         print(f"❌ Error in handle_update_contact_phone: {str(e)}")
+        return f"❌ Error updating contact: {str(e)}"
+
+def handle_update_contact_email(data):
+    """Handle updating contact email address"""
+    try:
+        name = data.get("name", "").strip()
+        email = data.get("email", "").strip()
+        
+        if not name or not email:
+            return "❌ Both contact name and email address are required"
+        
+        print(f"🔍 Searching for contact: '{name}'")
+        
+        # Search for contact
+        search_result = hubspot_service.search_contact(name)
+        
+        if not search_result or not search_result.get("success"):
+            return f"❌ Could not find contact: {name}"
+        
+        contacts = search_result.get("contacts", [])
+        if not contacts:
+            return f"❌ No contact found with name: {name}"
+        
+        # Use the first contact found
+        contact = contacts[0]
+        contact_id = contact.get("id")
+        
+        if not contact_id:
+            return f"❌ Invalid contact data for: {name}"
+        
+        # Get contact name for response
+        contact_props = contact.get("properties", {})
+        current_name = f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
+        if not current_name:
+            current_name = name
+        
+        print(f"✅ Found contact: {current_name} (ID: {contact_id})")
+        
+        # Update the contact
+        update_result = hubspot_service.update_contact(contact_id, {"email": email})
+        
+        if update_result and update_result.get("success"):
+            return f"✅ Updated {current_name}'s email to {email}"
+        else:
+            error_msg = update_result.get("error", "Unknown error") if update_result else "No response from HubSpot"
+            return f"❌ Failed to update email for {current_name}: {error_msg}"
+    
+    except Exception as e:
+        print(f"❌ Error in handle_update_contact_email: {str(e)}")
+        return f"❌ Error updating contact: {str(e)}"
+
+def handle_update_contact_company(data):
+    """Handle updating contact company"""
+    try:
+        name = data.get("name", "").strip()
+        company = data.get("company", "").strip()
+        
+        if not name or not company:
+            return "❌ Both contact name and company are required"
+        
+        # Search for contact
+        search_result = hubspot_service.search_contact(name)
+        
+        if not search_result or not search_result.get("success"):
+            return f"❌ Could not find contact: {name}"
+        
+        contacts = search_result.get("contacts", [])
+        if not contacts:
+            return f"❌ No contact found with name: {name}"
+        
+        # Use the first contact found
+        contact = contacts[0]
+        contact_id = contact.get("id")
+        
+        # Update the contact
+        update_result = hubspot_service.update_contact(contact_id, {"company": company})
+        
+        if update_result and update_result.get("success"):
+            return f"✅ Updated {name}'s company to {company}"
+        else:
+            return f"❌ Failed to update company: {update_result.get('error', 'Unknown error')}"
+    
+    except Exception as e:
         return f"❌ Error updating contact: {str(e)}"
 
 def handle_add_contact_note(data):
@@ -1997,7 +2167,7 @@ def handle_show_pipeline_summary(data):
 # ==================== ACTION DISPATCHER ====================
 
 def dispatch_action(parsed):
-    """Enhanced action dispatcher with RCS and CRM support"""
+    """Enhanced action dispatcher with all fixes"""
     action = parsed.get("action")
     print(f"🔧 Dispatching action: '{action}'")
     
@@ -2016,12 +2186,18 @@ def dispatch_action(parsed):
         return handle_send_message_to_contact(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
+    elif action == "send_email_to_contact":  # NEW
+        return handle_send_email_to_contact(parsed)
     
     # CRM Contact actions
     elif action == "create_contact":
         return handle_create_contact(parsed)
     elif action == "update_contact_phone":
         return handle_update_contact_phone(parsed)
+    elif action == "update_contact_email":  # NEW
+        return handle_update_contact_email(parsed)
+    elif action == "update_contact_company":  # NEW
+        return handle_update_contact_company(parsed)
     elif action == "add_contact_note":
         return handle_add_contact_note(parsed)
     elif action == "search_contact":
@@ -2811,9 +2987,9 @@ def crm_health_check():
             "hubspot_connection": hubspot_test.get("success", False),
             "hubspot_error": hubspot_test.get("error") if not hubspot_test.get("success") else None,
             "supported_crm_actions": [
-                "create_contact", "update_contact_phone", "add_contact_note", "search_contact",
-                "create_task", "schedule_meeting", "show_calendar", 
-                "create_opportunity", "show_pipeline_summary"
+                "create_contact", "update_contact_phone", "update_contact_email", "update_contact_company",
+                "add_contact_note", "search_contact", "create_task", "schedule_meeting", 
+                "show_calendar", "create_opportunity", "show_pipeline_summary"
             ]
         },
         "communication": {

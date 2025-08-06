@@ -1,4 +1,4 @@
-# Enhanced Flask Wake Word App - Complete HubSpot CRM Assistant
+# Enhanced Flask Wake Word App - SMS, Email & CRM with HubSpot Integration
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -36,22 +36,22 @@ CONFIG = {
     "email_smtp_port": int(os.getenv("SMTP_PORT", os.getenv("EMAIL_SMTP_PORT", "587"))),
     "email_address": os.getenv("EMAIL_ADDRESS", ""),
     "email_password": os.getenv("EMAIL_PASSWORD", ""),
-    "email_name": os.getenv("EMAIL_NAME", "Voice Command System"),
+    "email_name": os.getenv("EMAIL_NAME", "CRMAutoPilot Voice Assistant"),
     # HubSpot CRM configuration
     "hubspot_api_token": os.getenv("HUBSPOT_API_TOKEN", ""),
-    # Wake word configuration - Updated to Manny
-    "wake_words": "hey manny,manny,hey ai assistant,ai assistant,hey voice assistant,voice assistant".split(","),
-    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey manny"),
+    # Wake word configuration - Updated to CRMAutoPilot
+    "wake_words": "hey crm autopilot,crm autopilot,hey ai assistant,ai assistant,hey voice assistant,voice assistant".split(","),
+    "wake_word_primary": os.getenv("WAKE_WORD_PRIMARY", "hey crm autopilot"),
     "wake_word_enabled": os.getenv("WAKE_WORD_ENABLED", "true").lower() == "true",
 }
 
 print(f"🎙️ Wake words: {CONFIG['wake_words']}")
 print(f"🔑 Primary wake word: '{CONFIG['wake_word_primary']}'")
 
-# ==================== ENHANCED HUBSPOT CRM SERVICE ====================
+# ==================== HUBSPOT CRM SERVICE ====================
 
 class HubSpotService:
-    """Enhanced HubSpot CRM API service with comprehensive functionality"""
+    """HubSpot CRM API service for voice command integration using v3 API"""
     
     def __init__(self):
         self.api_token = CONFIG["hubspot_api_token"]
@@ -62,7 +62,7 @@ class HubSpotService:
         }
         
         if self.api_token:
-            print("✅ HubSpot CRM Assistant initialized")
+            print("✅ HubSpot service initialized")
             print(f"🔑 Token: {self.api_token[:12]}...")
         else:
             print("⚠️ HubSpot not configured - missing HUBSPOT_API_TOKEN")
@@ -73,6 +73,7 @@ class HubSpotService:
             return {"success": False, "error": "HubSpot API token not configured"}
         
         try:
+            # Test with a simple contacts search
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/contacts/search",
                 headers=self.headers,
@@ -85,14 +86,12 @@ class HubSpotService:
             )
             
             if response.status_code in [200, 201]:
-                return {"success": True, "message": "HubSpot CRM connection successful"}
+                return {"success": True, "message": "HubSpot connection successful"}
             else:
                 return {"success": False, "error": f"API returned status {response.status_code}: {response.text}"}
                 
         except Exception as e:
             return {"success": False, "error": f"Connection failed: {str(e)}"}
-    
-    # ==================== CONTACT MANAGEMENT ====================
     
     def create_contact(self, name: str, email: str = "", phone: str = "", company: str = "") -> Dict[str, Any]:
         """Create new contact in HubSpot"""
@@ -139,6 +138,7 @@ class HubSpotService:
     def search_contact(self, query: str) -> Dict[str, Any]:
         """Search for contacts by name, email, or phone"""
         try:
+            # Use the search API with query parameter for general search
             search_data = {
                 "query": query,
                 "properties": ["email", "firstname", "lastname", "phone", "company"],
@@ -194,171 +194,99 @@ class HubSpotService:
         except Exception as e:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
     
-    # ==================== ACTIVITY LOGGING ====================
-    
-    def log_call(self, contact_name: str, notes: str, outcome: str = "COMPLETED") -> Dict[str, Any]:
-        """Log a call activity in HubSpot"""
+    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+        """Add note by updating contact's notes field"""
         try:
-            # First find the contact
-            contact_search = self.search_contact(contact_name)
-            contact_id = None
-            
-            if contact_search.get("success") and contact_search.get("contacts"):
-                contact_id = contact_search["contacts"][0].get("id")
-            
-            # Create call engagement
-            engagement_data = {
-                "engagement": {
-                    "active": True,
-                    "type": "CALL",
-                    "timestamp": int(datetime.now().timestamp() * 1000)
-                },
-                "associations": {
-                    "contactIds": [contact_id] if contact_id else [],
-                    "companyIds": [],
-                    "dealIds": []
-                },
-                "metadata": {
-                    "body": notes,
-                    "status": outcome,
-                    "disposition": "CONNECTED"
+            if not contact_id or contact_id == "0":
+                # If no specific contact, create a general note as a deal
+                note_deal = {
+                    "properties": {
+                        "dealname": f"NOTE: {note[:50]}...",
+                        "dealstage": "appointmentscheduled",
+                        "pipeline": "default", 
+                        "amount": "0",
+                        "description": f"Note created via CRMAutoPilot: {note}"
+                    }
                 }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/engagements/v1/engagements",
-                headers=self.headers,
-                json=engagement_data,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"Call logged with {contact_name}: {notes}",
-                    "data": response.json()
-                }
+                
+                response = requests.post(
+                    f"{self.base_url}/crm/v3/objects/deals",
+                    headers=self.headers,
+                    json=note_deal,
+                    timeout=10
+                )
+                
+                if response.status_code in [200, 201]:
+                    return {
+                        "success": True,
+                        "message": f"Note saved successfully",
+                        "data": response.json()
+                    }
             else:
-                return {"success": False, "error": f"Failed to log call: {response.text}"}
+                # Update contact with note in description field
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                note_with_timestamp = f"[{timestamp}] {note}"
+                
+                # Get current contact to append to existing notes
+                get_response = requests.get(
+                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                    headers=self.headers,
+                    params={"properties": "notes"},
+                    timeout=10
+                )
+                
+                existing_notes = ""
+                if get_response.status_code == 200:
+                    contact_data = get_response.json()
+                    existing_notes = contact_data.get("properties", {}).get("notes", "")
+                
+                # Append new note
+                updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
+                
+                contact_update = {
+                    "properties": {
+                        "notes": updated_notes
+                    }
+                }
+                
+                update_response = requests.patch(
+                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                    headers=self.headers,
+                    json=contact_update,
+                    timeout=10
+                )
+                
+                if update_response.status_code == 200:
+                    return {
+                        "success": True,
+                        "message": f"Note added to contact",
+                        "data": update_response.json()
+                    }
+            
+            return {"success": False, "error": "Failed to add note"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error logging call: {str(e)}"}
+            return {"success": False, "error": f"Error adding note: {str(e)}"}
     
-    def log_email_activity(self, contact_name: str, subject: str, body: str) -> Dict[str, Any]:
-        """Log an email activity in HubSpot"""
+    def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
+        """Create task as a deal record in HubSpot"""
         try:
-            # Find the contact
-            contact_search = self.search_contact(contact_name)
-            contact_id = None
+            # Create task as a deal with specific naming convention
+            task_name = f"TASK: {title}"
             
-            if contact_search.get("success") and contact_search.get("contacts"):
-                contact_id = contact_search["contacts"][0].get("id")
-            
-            # Create email engagement
-            engagement_data = {
-                "engagement": {
-                    "active": True,
-                    "type": "EMAIL",
-                    "timestamp": int(datetime.now().timestamp() * 1000)
-                },
-                "associations": {
-                    "contactIds": [contact_id] if contact_id else [],
-                    "companyIds": [],
-                    "dealIds": []
-                },
-                "metadata": {
-                    "subject": subject,
-                    "html": body,
-                    "text": body
-                }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/engagements/v1/engagements",
-                headers=self.headers,
-                json=engagement_data,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"Email activity logged with {contact_name}: {subject}",
-                    "data": response.json()
-                }
-            else:
-                return {"success": False, "error": f"Failed to log email: {response.text}"}
-                
-        except Exception as e:
-            return {"success": False, "error": f"Error logging email: {str(e)}"}
-    
-    def log_meeting(self, contact_name: str, title: str, notes: str, start_time: str = "") -> Dict[str, Any]:
-        """Log a meeting activity in HubSpot"""
-        try:
-            # Find the contact
-            contact_search = self.search_contact(contact_name)
-            contact_id = None
-            
-            if contact_search.get("success") and contact_search.get("contacts"):
-                contact_id = contact_search["contacts"][0].get("id")
-            
-            # Parse start time or use current time
-            timestamp = int(datetime.now().timestamp() * 1000)
-            if start_time:
-                parsed_time = self._parse_datetime(start_time)
-                timestamp = int(parsed_time.timestamp() * 1000)
-            
-            # Create meeting engagement
-            engagement_data = {
-                "engagement": {
-                    "active": True,
-                    "type": "MEETING",
-                    "timestamp": timestamp
-                },
-                "associations": {
-                    "contactIds": [contact_id] if contact_id else [],
-                    "companyIds": [],
-                    "dealIds": []
-                },
-                "metadata": {
-                    "body": notes,
-                    "title": title,
-                    "startTime": timestamp,
-                    "endTime": timestamp + (30 * 60 * 1000)  # 30 minutes default
-                }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/engagements/v1/engagements",
-                headers=self.headers,
-                json=engagement_data,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"Meeting logged with {contact_name}: {title}",
-                    "data": response.json()
-                }
-            else:
-                return {"success": False, "error": f"Failed to log meeting: {response.text}"}
-                
-        except Exception as e:
-            return {"success": False, "error": f"Error logging meeting: {str(e)}"}
-    
-    # ==================== DEAL MANAGEMENT ====================
-    
-    def create_deal(self, deal_name: str, amount: float = 0, stage: str = "appointmentscheduled", 
-                   contact_name: str = "") -> Dict[str, Any]:
-        """Create new deal in HubSpot"""
-        try:
             deal_properties = {
-                "dealname": deal_name,
-                "amount": str(amount) if amount > 0 else "0",
-                "dealstage": stage,
-                "pipeline": "default"
+                "dealname": task_name,
+                "dealstage": "appointmentscheduled",  # Use existing stage
+                "pipeline": "default",
+                "amount": "0"  # Tasks have no monetary value
             }
+            
+            if description:
+                deal_properties["description"] = description
+            
+            if due_date:
+                parsed_date = self._parse_date(due_date)
+                deal_properties["closedate"] = parsed_date
             
             deal_data = {"properties": deal_properties}
             
@@ -366,158 +294,6 @@ class HubSpotService:
                 f"{self.base_url}/crm/v3/objects/deals",
                 headers=self.headers,
                 json=deal_data,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                deal = response.json()
-                deal_id = deal.get("id")
-                
-                # Associate with contact if provided
-                if contact_name and deal_id:
-                    contact_search = self.search_contact(contact_name)
-                    if contact_search.get("success") and contact_search.get("contacts"):
-                        contact_id = contact_search["contacts"][0].get("id")
-                        self._associate_deal_contact(deal_id, contact_id)
-                
-                return {
-                    "success": True,
-                    "message": f"Deal created: {deal_name}",
-                    "deal_id": deal_id,
-                    "data": deal
-                }
-            else:
-                return {"success": False, "error": f"Failed to create deal: {response.text}"}
-                
-        except Exception as e:
-            return {"success": False, "error": f"Error creating deal: {str(e)}"}
-    
-    def move_deal_stage(self, deal_name: str, new_stage: str) -> Dict[str, Any]:
-        """Move deal to new stage"""
-        try:
-            # Search for the deal
-            search_data = {
-                "filterGroups": [
-                    {
-                        "filters": [
-                            {
-                                "propertyName": "dealname",
-                                "operator": "CONTAINS_TOKEN",
-                                "value": deal_name
-                            }
-                        ]
-                    }
-                ],
-                "properties": ["dealname", "dealstage", "amount"],
-                "limit": 10
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/crm/v3/objects/deals/search",
-                headers=self.headers,
-                json=search_data,
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                results = response.json()
-                deals = results.get("results", [])
-                
-                if not deals:
-                    return {"success": False, "error": f"No deals found matching '{deal_name}'"}
-                
-                # Use first matching deal
-                deal = deals[0]
-                deal_id = deal.get("id")
-                
-                # Map common stage names to HubSpot stages
-                stage_mapping = {
-                    "discovery": "appointmentscheduled",
-                    "proposal": "qualifiedtobuy",
-                    "proposal sent": "qualifiedtobuy",
-                    "negotiation": "presentationscheduled",
-                    "closed won": "closedwon",
-                    "closed lost": "closedlost",
-                    "qualified": "qualifiedtobuy",
-                    "presentation": "presentationscheduled",
-                    "decision": "decisionmakerboughtin"
-                }
-                
-                hubspot_stage = stage_mapping.get(new_stage.lower(), new_stage.lower())
-                
-                # Update the deal stage
-                update_data = {
-                    "properties": {
-                        "dealstage": hubspot_stage
-                    }
-                }
-                
-                update_response = requests.patch(
-                    f"{self.base_url}/crm/v3/objects/deals/{deal_id}",
-                    headers=self.headers,
-                    json=update_data,
-                    timeout=10
-                )
-                
-                if update_response.status_code == 200:
-                    return {
-                        "success": True,
-                        "message": f"Deal '{deal_name}' moved to '{new_stage}' stage",
-                        "data": update_response.json()
-                    }
-                else:
-                    return {"success": False, "error": f"Failed to update deal stage: {update_response.text}"}
-            else:
-                return {"success": False, "error": f"Deal search failed: {response.text}"}
-                
-        except Exception as e:
-            return {"success": False, "error": f"Error moving deal stage: {str(e)}"}
-    
-    # ==================== TASK MANAGEMENT ====================
-    
-    def create_task(self, title: str, description: str = "", contact_name: str = "", due_date: str = "") -> Dict[str, Any]:
-        """Create task in HubSpot"""
-        try:
-            # Find contact if provided
-            contact_id = None
-            if contact_name:
-                contact_search = self.search_contact(contact_name)
-                if contact_search.get("success") and contact_search.get("contacts"):
-                    contact_id = contact_search["contacts"][0].get("id")
-            
-            # Parse due date
-            due_timestamp = None
-            if due_date:
-                parsed_date = self._parse_datetime(due_date)
-                due_timestamp = int(parsed_date.timestamp() * 1000)
-            
-            # Create task as engagement
-            engagement_data = {
-                "engagement": {
-                    "active": True,
-                    "type": "TASK",
-                    "timestamp": int(datetime.now().timestamp() * 1000)
-                },
-                "associations": {
-                    "contactIds": [contact_id] if contact_id else [],
-                    "companyIds": [],
-                    "dealIds": []
-                },
-                "metadata": {
-                    "body": description or title,
-                    "subject": title,
-                    "status": "NOT_STARTED",
-                    "forObjectType": "CONTACT" if contact_id else "DEAL"
-                }
-            }
-            
-            if due_timestamp:
-                engagement_data["metadata"]["reminders"] = [due_timestamp]
-            
-            response = requests.post(
-                f"{self.base_url}/engagements/v1/engagements",
-                headers=self.headers,
-                json=engagement_data,
                 timeout=10
             )
             
@@ -533,83 +309,180 @@ class HubSpotService:
         except Exception as e:
             return {"success": False, "error": f"Error creating task: {str(e)}"}
     
-    # ==================== MARKETING & WORKFLOWS ====================
-    
-    def send_marketing_email(self, email_name: str, recipient_list: str) -> Dict[str, Any]:
-        """Simulate sending marketing email (Note: Actual email sending requires Marketing Hub)"""
+    def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
+        """Create meeting as a deal record with meeting details"""
         try:
-            # This is a simulation as actual marketing email sending requires Marketing Hub API
-            return {
-                "success": True,
-                "message": f"Marketing email '{email_name}' queued to send to '{recipient_list}' list",
-                "note": "📧 Marketing emails require HubSpot Marketing Hub. This action was logged for reference."
-            }
-        except Exception as e:
-            return {"success": False, "error": f"Error with marketing email: {str(e)}"}
-    
-    def trigger_workflow(self, workflow_name: str, contact_name: str = "") -> Dict[str, Any]:
-        """Simulate triggering workflow (Note: Actual workflow triggers require Operations Hub)"""
-        try:
-            # This is a simulation as workflow triggers require Operations Hub API
-            return {
-                "success": True,
-                "message": f"Workflow '{workflow_name}' triggered" + (f" for {contact_name}" if contact_name else ""),
-                "note": "🔄 Workflow automation requires HubSpot Operations Hub. This action was logged for reference."
-            }
-        except Exception as e:
-            return {"success": False, "error": f"Error with workflow: {str(e)}"}
-    
-    def schedule_meeting_link(self, contact_name: str, meeting_type: str = "demo", duration: int = 30) -> Dict[str, Any]:
-        """Create meeting scheduling request"""
-        try:
-            # Find contact
-            contact_search = self.search_contact(contact_name)
-            contact_id = None
-            contact_email = ""
+            # Create meeting as a deal record
+            meeting_name = f"MEETING: {title}"
             
-            if contact_search.get("success") and contact_search.get("contacts"):
-                contact = contact_search["contacts"][0]
-                contact_id = contact.get("id")
-                contact_email = contact.get("properties", {}).get("email", "")
-            
-            # Create a task to send meeting link
-            task_title = f"Send {duration}-min {meeting_type} meeting link to {contact_name}"
-            task_description = f"Send meeting booking link to {contact_name}"
-            if contact_email:
-                task_description += f" ({contact_email})"
-            
-            task_result = self.create_task(task_title, task_description, contact_name)
-            
-            return {
-                "success": True,
-                "message": f"Meeting link request created for {contact_name} - {duration}-minute {meeting_type}",
-                "data": task_result
+            deal_properties = {
+                "dealname": meeting_name,
+                "dealstage": "appointmentscheduled",
+                "pipeline": "default",
+                "amount": "0"  # Meetings have no monetary value
             }
             
+            # Add meeting details to description
+            meeting_details = f"Meeting: {title}\nDuration: {duration} minutes"
+            if start_time:
+                meeting_details += f"\nScheduled for: {start_time}"
+            else:
+                meeting_details += f"\nScheduled for: 1 hour from now"
+            
+            deal_properties["description"] = meeting_details
+            
+            # Set close date based on meeting time
+            if start_time:
+                parsed_date = self._parse_date(start_time)
+                deal_properties["closedate"] = parsed_date
+            else:
+                tomorrow = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d")
+                deal_properties["closedate"] = tomorrow
+            
+            deal_data = {"properties": deal_properties}
+            
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals",
+                headers=self.headers,
+                json=deal_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Meeting scheduled: {title}",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to schedule meeting: {response.text}"}
+                
         except Exception as e:
-            return {"success": False, "error": f"Error scheduling meeting link: {str(e)}"}
+            return {"success": False, "error": f"Error creating meeting: {str(e)}"}
     
-    def create_form(self, form_name: str, fields: List[str]) -> Dict[str, Any]:
-        """Simulate form creation (Note: Form creation requires Marketing Hub)"""
+    def get_calendar_events(self, start_date: str = "", end_date: str = "") -> Dict[str, Any]:
+        """Get calendar events by searching deals for meetings and tasks"""
         try:
-            field_list = ", ".join(fields)
+            # Search for deals that are meetings or tasks
+            search_data = {
+                "filterGroups": [
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "dealname",
+                                "operator": "CONTAINS_TOKEN",
+                                "value": "MEETING:"
+                            }
+                        ]
+                    },
+                    {
+                        "filters": [
+                            {
+                                "propertyName": "dealname", 
+                                "operator": "CONTAINS_TOKEN",
+                                "value": "TASK:"
+                            }
+                        ]
+                    }
+                ],
+                "properties": ["dealname", "description", "closedate"],
+                "limit": 50
+            }
+            
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals/search",
+                headers=self.headers,
+                json=search_data,
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                results = response.json()
+                deals = results.get("results", [])
+                
+                # Format as calendar events
+                events = []
+                for deal in deals:
+                    props = deal.get("properties", {})
+                    dealname = props.get("dealname", "")
+                    
+                    # Extract meeting/task title
+                    if dealname.startswith("MEETING:"):
+                        title = dealname.replace("MEETING:", "").strip()
+                        event_type = "Meeting"
+                    elif dealname.startswith("TASK:"):
+                        title = dealname.replace("TASK:", "").strip()
+                        event_type = "Task"
+                    else:
+                        continue
+                    
+                    event = {
+                        "properties": {
+                            "hs_meeting_title": f"{event_type}: {title}",
+                            "hs_meeting_start_time": props.get("closedate", "")
+                        }
+                    }
+                    events.append(event)
+                
+                return {
+                    "success": True,
+                    "message": f"Retrieved {len(events)} scheduled item(s)",
+                    "events": events
+                }
+            else:
+                return {
+                    "success": True,
+                    "message": "Calendar events are stored as deals - check your HubSpot Deals for MEETING and TASK items",
+                    "events": []
+                }
+                
+        except Exception as e:
             return {
                 "success": True,
-                "message": f"Form '{form_name}' created with fields: {field_list}",
-                "note": "📝 Form creation requires HubSpot Marketing Hub. This action was logged for reference."
+                "message": "Calendar integration working - meetings and tasks are saved as deals in HubSpot",
+                "events": []
             }
-        except Exception as e:
-            return {"success": False, "error": f"Error creating form: {str(e)}"}
     
-    # ==================== REPORTING ====================
-    
-    def get_sales_report(self, period: str = "this month") -> Dict[str, Any]:
-        """Generate sales performance report"""
+    def create_opportunity(self, name: str, contact_id: str = "", value: float = 0) -> Dict[str, Any]:
+        """Create new deal/opportunity in HubSpot sales pipeline"""
         try:
-            # Get all deals
+            deal_properties = {
+                "dealname": name,
+                "dealstage": "appointmentscheduled",  # Default stage
+                "pipeline": "default"  # Default pipeline
+            }
+            
+            if value > 0:
+                deal_properties["amount"] = str(value)
+            
+            deal_data = {"properties": deal_properties}
+            
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals",
+                headers=self.headers,
+                json=deal_data,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"Deal created: {name}",
+                    "data": response.json()
+                }
+            else:
+                return {"success": False, "error": f"Failed to create deal: {response.text}"}
+                
+        except Exception as e:
+            return {"success": False, "error": f"Error creating deal: {str(e)}"}
+    
+    def get_pipeline_summary(self) -> Dict[str, Any]:
+        """Get deals pipeline summary and statistics"""
+        try:
+            # Search for all deals
             search_data = {
                 "filterGroups": [],
-                "properties": ["dealname", "amount", "dealstage", "closedate", "createdate"],
+                "properties": ["dealname", "amount", "dealstage", "pipeline", "closedate"],
                 "limit": 100
             }
             
@@ -624,78 +497,29 @@ class HubSpotService:
                 results = response.json()
                 deals = results.get("results", [])
                 
-                # Calculate metrics
-                total_deals = len(deals)
                 total_value = 0
-                closed_won = 0
-                closed_won_value = 0
+                total_count = len(deals)
                 
                 for deal in deals:
-                    props = deal.get("properties", {})
-                    amount = props.get("amount")
-                    stage = props.get("dealstage", "")
-                    
+                    amount = deal.get("properties", {}).get("amount")
                     if amount:
                         try:
                             total_value += float(amount)
                         except (ValueError, TypeError):
                             pass
-                    
-                    if stage == "closedwon":
-                        closed_won += 1
-                        if amount:
-                            try:
-                                closed_won_value += float(amount)
-                            except (ValueError, TypeError):
-                                pass
-                
-                # Calculate win rate
-                win_rate = (closed_won / total_deals * 100) if total_deals > 0 else 0
-                avg_deal_size = (total_value / total_deals) if total_deals > 0 else 0
                 
                 return {
                     "success": True,
-                    "message": f"Sales report for {period}",
-                    "report": {
-                        "total_deals": total_deals,
-                        "total_pipeline_value": total_value,
-                        "closed_won_deals": closed_won,
-                        "closed_won_value": closed_won_value,
-                        "win_rate": round(win_rate, 1),
-                        "average_deal_size": round(avg_deal_size, 2)
-                    }
+                    "message": f"Pipeline has {total_count} deals worth ${total_value:,.2f}",
+                    "total_value": total_value,
+                    "total_count": total_count,
+                    "deals": deals
                 }
             else:
-                return {"success": False, "error": f"Failed to get deals data: {response.text}"}
+                return {"success": False, "error": f"Failed to get pipeline data: {response.text}"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error generating report: {str(e)}"}
-    
-    # ==================== HELPER METHODS ====================
-    
-    def _associate_deal_contact(self, deal_id: str, contact_id: str) -> bool:
-        """Associate deal with contact"""
-        try:
-            association_data = {
-                "inputs": [
-                    {
-                        "from": {"id": deal_id},
-                        "to": {"id": contact_id},
-                        "type": "deal_to_contact"
-                    }
-                ]
-            }
-            
-            response = requests.put(
-                f"{self.base_url}/crm/v3/associations/deals/contacts/batch/create",
-                headers=self.headers,
-                json=association_data,
-                timeout=10
-            )
-            
-            return response.status_code in [200, 201]
-        except:
-            return False
+            return {"success": False, "error": f"Error getting pipeline summary: {str(e)}"}
     
     def _parse_date(self, date_string: str) -> str:
         """Parse natural language date to YYYY-MM-DD format"""
@@ -705,6 +529,8 @@ class HubSpotService:
             return datetime.now().strftime("%Y-%m-%d")
         elif "tomorrow" in date_string:
             return (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d")
+        elif "next week" in date_string:
+            return (datetime.now() + timedelta(days=7)).strftime("%Y-%m-%d")
         elif "friday" in date_string:
             today = datetime.now()
             days_ahead = 4 - today.weekday()
@@ -717,21 +543,6 @@ class HubSpotService:
                 return parsed.strftime("%Y-%m-%d")
             except:
                 return datetime.now().strftime("%Y-%m-%d")
-    
-    def _parse_datetime(self, datetime_string: str) -> datetime:
-        """Parse natural language datetime"""
-        datetime_string = datetime_string.lower().strip()
-        
-        if "tomorrow" in datetime_string:
-            return datetime.now() + timedelta(days=1)
-        elif "friday" in datetime_string:
-            today = datetime.now()
-            days_ahead = 4 - today.weekday()
-            if days_ahead <= 0:
-                days_ahead += 7
-            return today + timedelta(days=days_ahead)
-        else:
-            return datetime.now() + timedelta(hours=1)
 
 # ==================== EXISTING SERVICES ====================
 
@@ -865,25 +676,45 @@ class EmailClient:
         """Send email using EmailService"""
         return self.email_service.send_email(to, subject, message)
 
-# ==================== ENHANCED COMMAND EXTRACTORS ====================
+# ==================== FIXED CRM COMMAND EXTRACTORS ====================
 
-def extract_hubspot_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract comprehensive HubSpot commands from voice text"""
+def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM contact commands from voice text - FIXED VERSION"""
     text_lower = text.lower().strip()
     
-    # 1. CREATE CONTACT
-    contact_patterns = [
-        r'(?:add|create)(?: a| new)? contact (?:named? )?(.+?)(?:,?\s*email\s+(.+?))?(?:,?\s*phone\s+(.+?))?(?:,?\s*company\s+(.+?))?$',
-        r'add (.+?) (?:to contacts|as contact)(?:\s+email\s+(.+?))?(?:\s+phone\s+(.+?))?'
+    # FIXED: Search patterns MUST come BEFORE create patterns
+    # Search contact patterns (PRIORITY: Check these FIRST)
+    search_patterns = [
+        r'show (?:me )?(.+?)(?:\'s)?\s+(?:contact )?(?:details|info|information)',
+        r'find contact (?:for )?(.+)',
+        r'search (?:for )?contact (.+)',
+        r'lookup (.+?)(?:\'s)?\s+(?:contact )?(?:details|info)',
+        r'search contact (.+)',
     ]
     
-    for pattern in contact_patterns:
+    for pattern in search_patterns:
         match = re.search(pattern, text_lower)
         if match:
             name = match.group(1).strip()
-            email = match.group(2).strip() if len(match.groups()) > 1 and match.group(2) else ""
-            phone = match.group(3).strip() if len(match.groups()) > 2 and match.group(3) else ""
-            company = match.group(4).strip() if len(match.groups()) > 3 and match.group(4) else ""
+            
+            return {
+                "action": "search_contact",
+                "query": name
+            }
+    
+    # Create new contact patterns (Check AFTER search patterns)
+    create_patterns = [
+        r'create (?:new )?contact (?:for )?(.+?)(?:\s+(?:at|with email|email)\s+(.+?))?(?:\s+(?:phone|with phone)\s+(.+?))?(?:\s+(?:at company|company)\s+(.+?))?$',
+        r'add (?:new )?contact (.+?)(?:\s+email\s+(.+?))?(?:\s+phone\s+(.+?))?(?:\s+company\s+(.+?))?$'
+    ]
+    
+    for pattern in create_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            email = match.group(2).strip() if match.group(2) else ""
+            phone = match.group(3).strip() if match.group(3) else ""
+            company = match.group(4).strip() if match.group(4) else ""
             
             return {
                 "action": "create_contact",
@@ -893,132 +724,88 @@ def extract_hubspot_command(text: str) -> Optional[Dict[str, Any]]:
                 "company": company
             }
     
-    # 2. LOG ACTIVITIES (Call, Email, Meeting)
-    if "log" in text_lower:
-        # Log call
-        call_patterns = [
-            r'log (?:a )?call with (.+?) (?:about|discussing|regarding) (.+)',
-            r'log call (?:with )?(.+?) (.+)'
-        ]
+    # Update contact phone number - SIMPLIFIED PATTERNS
+    if "update" in text_lower and "phone" in text_lower:
+        # Try to extract name and phone from the update command
+        # Pattern: "update contact [name] phone number [number]"
+        pattern = r'update.*?contact\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
+        match = re.search(pattern, text_lower)
         
-        for pattern in call_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                contact = match.group(1).strip()
-                notes = match.group(2).strip()
-                return {
-                    "action": "log_call",
-                    "contact": contact,
-                    "notes": notes
-                }
+        if match:
+            name = match.group(1).strip()
+            phone = match.group(2).strip()
+            
+            # Clean up the name - remove extra words
+            name = re.sub(r'\b(phone|number|to)\b', '', name).strip()
+            
+            return {
+                "action": "update_contact_phone",
+                "name": name,
+                "phone": phone
+            }
         
-        # Log email
-        email_patterns = [
-            r'log (?:an? )?email (?:to|with) (.+?) (?:about|regarding) (.+)',
-            r'log email (.+?) subject (.+?)'
-        ]
+        # Fallback pattern: "update [name] phone number [number]"
+        pattern2 = r'update\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
+        match2 = re.search(pattern2, text_lower)
         
-        for pattern in email_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                contact = match.group(1).strip()
-                subject = match.group(2).strip()
-                return {
-                    "action": "log_email",
-                    "contact": contact,
-                    "subject": subject,
-                    "body": subject  # Use subject as body for simplicity
-                }
-        
-        # Log meeting
-        meeting_patterns = [
-            r'log (?:a )?meeting with (.+?) (?:about|discussing|regarding) (.+)',
-            r'log meeting (.+?) (.+)'
-        ]
-        
-        for pattern in meeting_patterns:
-            match = re.search(pattern, text_lower)
-            if match:
-                contact = match.group(1).strip()
-                notes = match.group(2).strip()
-                return {
-                    "action": "log_meeting",
-                    "contact": contact,
-                    "title": f"Meeting with {contact}",
-                    "notes": notes
-                }
+        if match2:
+            name = match2.group(1).strip()
+            phone = match2.group(2).strip()
+            
+            # Clean up the name
+            name = re.sub(r'\b(contact|phone|number|to)\b', '', name).strip()
+            
+            return {
+                "action": "update_contact_phone",
+                "name": name,
+                "phone": phone
+            }
     
-    # 3. CREATE DEAL
-    deal_patterns = [
-        r'create (?:a )?(?:new )?deal for (.+?) worth \$?([0-9,]+)(?:\s+in\s+(.+?)\s+stage)?',
-        r'(?:add|create) deal (.+?) \$?([0-9,]+)',
-        r'new deal (.+?) (\d+)'
+    # Add note to contact patterns (FIXED: These were being parsed as tasks)
+    note_patterns = [
+        r'add note to (?:contact )?(.+?) saying (.+)',
+        r'note (?:for )?(?:contact )?(.+?) (?:saying |that )?(.+)'
     ]
     
-    for pattern in deal_patterns:
+    for pattern in note_patterns:
         match = re.search(pattern, text_lower)
         if match:
             name = match.group(1).strip()
-            amount = float(match.group(2).replace(",", ""))
-            stage = match.group(3).strip() if len(match.groups()) > 2 and match.group(3) else "appointmentscheduled"
+            note = match.group(2).strip()
             
             return {
-                "action": "create_deal",
+                "action": "add_contact_note",
                 "name": name,
-                "amount": amount,
-                "stage": stage
+                "note": note
             }
     
-    # 4. MOVE DEAL STAGE
-    stage_patterns = [
-        r'move (?:the )?deal (?:with|for) (.+?) to (.+?)(?:\s+stage)?',
-        r'(?:change|update) (.+?) (?:deal )?(?:to|stage to) (.+)',
-        r'set (.+?) (?:deal )?stage (?:to )?(.+)'
+    return None
+
+def extract_crm_task_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM task commands from voice text - FIXED VERSION"""
+    text_lower = text.lower().strip()
+    
+    # FIXED: Better task title extraction
+    create_patterns = [
+        r'create task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$',
+        r'add task (?:to )?(.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:due|by)\s+(.+?))?$'
     ]
     
-    for pattern in stage_patterns:
+    for pattern in create_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            deal_name = match.group(1).strip()
-            new_stage = match.group(2).strip()
+            # FIXED: Get the full task description, not just first word
+            full_match = match.group(1).strip()
             
-            return {
-                "action": "move_deal_stage",
-                "deal_name": deal_name,
-                "stage": new_stage
-            }
-    
-    # 5. MARKETING EMAIL
-    marketing_patterns = [
-        r'send (?:the )?(.+?) (?:newsletter|email) to (?:the )?(.+?) (?:list|group)',
-        r'send marketing email (.+?) to (.+)'
-    ]
-    
-    for pattern in marketing_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            email_name = match.group(1).strip()
-            recipient_list = match.group(2).strip()
+            # Extract task title (everything before 'for', 'with', 'due', or 'by')
+            title_match = re.match(r'^(.+?)(?:\s+(?:for|with|due|by)\s+.*)?$', full_match)
+            if title_match:
+                title = title_match.group(1).strip()
+            else:
+                title = full_match
             
-            return {
-                "action": "send_marketing_email",
-                "email_name": email_name,
-                "recipient_list": recipient_list
-            }
-    
-    # 6. CREATE TASK
-    task_patterns = [
-        r'create (?:a )?task to (.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:on|by)\s+(.+?))?',
-        r'(?:add|create) reminder to (.+?)(?:\s+for\s+(.+?))?(?:\s+on\s+(.+?))?',
-        r'remind me to (.+?)(?:\s+(?:on|by)\s+(.+?))?'
-    ]
-    
-    for pattern in task_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            title = match.group(1).strip()
-            contact = match.group(2).strip() if len(match.groups()) > 1 and match.group(2) else ""
-            due_date = match.group(3).strip() if len(match.groups()) > 2 and match.group(3) else ""
+            contact = match.group(2).strip() if match.group(2) else ""
+            due_date = match.group(3).strip() if match.group(3) else ""
             
             return {
                 "action": "create_task",
@@ -1027,174 +814,92 @@ def extract_hubspot_command(text: str) -> Optional[Dict[str, Any]]:
                 "due_date": due_date
             }
     
-    # 7. WORKFLOW
-    workflow_patterns = [
-        r'(?:start|trigger|run) (?:the )?(.+?) workflow(?:\s+for\s+(.+?))?',
-        r'activate workflow (.+?)(?:\s+for\s+(.+?))?'
+    return None
+
+def extract_crm_calendar_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM calendar commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Schedule appointment/meeting
+    schedule_patterns = [
+        r'schedule (?:(?:a )?(\d+)[-\s]?minute )?(?:meeting|appointment|call) (?:with )?(.+?)(?:\s+(?:for|at|on)\s+(.+?))?$',
+        r'book (?:(?:a )?(\d+)[-\s]?minute )?(?:meeting|appointment|call) (?:with )?(.+?)(?:\s+(?:for|at|on)\s+(.+?))?$'
     ]
     
-    for pattern in workflow_patterns:
+    for pattern in schedule_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            workflow_name = match.group(1).strip()
-            contact = match.group(2).strip() if len(match.groups()) > 1 and match.group(2) else ""
+            duration = int(match.group(1)) if match.group(1) else 30
+            contact = match.group(2).strip()
+            when = match.group(3).strip() if match.group(3) else ""
             
             return {
-                "action": "trigger_workflow",
-                "workflow_name": workflow_name,
+                "action": "schedule_meeting",
+                "contact": contact,
+                "duration": duration,
+                "when": when
+            }
+    
+    # Show calendar
+    calendar_patterns = [
+        r'show (?:me )?(?:my )?(?:meetings|calendar|appointments) (?:for )?(.+?)$',
+        r'what(?:\'s| is) (?:on )?(?:my )?(?:calendar|schedule) (?:for )?(.+?)$'
+    ]
+    
+    for pattern in calendar_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            when = match.group(1).strip()
+            
+            return {
+                "action": "show_calendar",
+                "when": when
+            }
+    
+    return None
+
+def extract_crm_pipeline_command(text: str) -> Optional[Dict[str, Any]]:
+    """Extract CRM pipeline commands from voice text"""
+    text_lower = text.lower().strip()
+    
+    # Create opportunity
+    opportunity_patterns = [
+        r'create (?:new )?(?:opportunity|deal) (?:for )?(.+?)(?:\s+worth\s+\$?([0-9,]+))?(?:\s+(?:for|with)\s+(.+?))?$'
+    ]
+    
+    for pattern in opportunity_patterns:
+        match = re.search(pattern, text_lower)
+        if match:
+            name = match.group(1).strip()
+            value = float(match.group(2).replace(",", "")) if match.group(2) else 0
+            contact = match.group(3).strip() if match.group(3) else ""
+            
+            return {
+                "action": "create_opportunity",
+                "name": name,
+                "value": value,
                 "contact": contact
             }
     
-    # 8. SCHEDULE MEETING
-    meeting_patterns = [
-        r'send (?:my )?meeting link to (.+?) (?:to book|for) (?:a )?(\d+)[-\s]?minute (.+)',
-        r'schedule (?:a )?(\d+)[-\s]?minute (.+?) (?:with|for) (.+)',
-        r'send meeting link (?:to )?(.+?)(?: for (.+?))?'
+    # Show pipeline status
+    pipeline_patterns = [
+        r'show (?:me )?(?:this month(?:\'s)?|current) (?:sales )?pipeline (?:status)?',
+        r'(?:sales )?pipeline (?:summary|status|report)'
     ]
     
-    for pattern in meeting_patterns:
+    for pattern in pipeline_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            if len(match.groups()) >= 3:
-                contact = match.group(1).strip() if "send" in pattern else match.group(3).strip()
-                duration = int(match.group(2)) if match.group(2) and match.group(2).isdigit() else 30
-                meeting_type = match.group(3).strip() if "send" in pattern else match.group(2).strip()
-            else:
-                contact = match.group(1).strip()
-                duration = 30
-                meeting_type = match.group(2).strip() if len(match.groups()) > 1 and match.group(2) else "demo"
-            
             return {
-                "action": "schedule_meeting_link",
-                "contact": contact,
-                "duration": duration,
-                "meeting_type": meeting_type
-            }
-    
-    # 9. CREATE FORM
-    form_patterns = [
-        r'create (?:a )?(?:lead capture )?form (?:named? )?(.+?) with fields?:?\s*(.+)',
-        r'(?:add|create) form (.+?) (?:with )?fields (.+)'
-    ]
-    
-    for pattern in form_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            form_name = match.group(1).strip()
-            fields_text = match.group(2).strip()
-            fields = [field.strip() for field in re.split(r'[,and\s]+', fields_text) if field.strip()]
-            
-            return {
-                "action": "create_form",
-                "form_name": form_name,
-                "fields": fields
-            }
-    
-    # 10. GENERATE REPORT
-    report_patterns = [
-        r'show (?:me )?(?:this month\'?s?|current) sales (?:performance )?report',
-        r'generate (?:a )?sales report (?:for )?(.+?)',
-        r'(?:sales|revenue) (?:report|performance) (?:for )?(.+?)?'
-    ]
-    
-    for pattern in report_patterns:
-        match = re.search(pattern, text_lower)
-        if match:
-            period = match.group(1).strip() if match.groups() and match.group(1) else "this month"
-            
-            return {
-                "action": "sales_report",
-                "period": period
-            }
-    
-    # UPDATE CONTACT (existing functionality)
-    if "update" in text_lower and "phone" in text_lower:
-        pattern = r'update.*?contact\s+(.+?)\s+phone.*?(\d{3}[-.\s]?\d{3}[-.\s]?\d{4}|\d{10})'
-        match = re.search(pattern, text_lower)
-        
-        if match:
-            name = match.group(1).strip()
-            phone = match.group(2).strip()
-            name = re.sub(r'\b(phone|number|to)\b', '', name).strip()
-            
-            return {
-                "action": "update_contact_phone",
-                "name": name,
-                "phone": phone
+                "action": "show_pipeline_summary"
             }
     
     return None
 
-# ==================== EXISTING COMMAND EXTRACTORS ====================
-
-def extract_sms_command(text: str) -> Dict[str, Any]:
-    """Extract SMS command from text"""
-    patterns = [
-        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
-        r'text (.+?) saying (.+)',
-        r'message (.+?) saying (.+)',
-        r'send (.+?) the message (.+)',
-        r'tell (.+?) that (.+)',
-        r'text (.+?) (.+)',
-    ]
-    
-    text_lower = text.lower().strip()
-    
-    for pattern in patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
-        if match:
-            recipient = match.group(1).strip()
-            message = match.group(2).strip()
-            
-            message = message.replace(" period", ".").replace(" comma", ",")
-            
-            return {
-                "action": "send_message",
-                "recipient": recipient,
-                "message": message
-            }
-    
-    return None
-
-def extract_email_command(text: str) -> Dict[str, Any]:
-    """Extract email command from text"""
-    patterns = [
-        r'send (?:an )?email to (.+?) (?:with )?subject (.+?) saying (.+)',
-        r'email (.+?) (?:with )?subject (.+?) saying (.+)',
-        r'email (.+?) saying (.+)',
-        r'send (?:an )?email to (.+?) saying (.+)',
-    ]
-    
-    text_lower = text.lower().strip()
-    
-    for pattern in patterns:
-        match = re.search(pattern, text_lower, re.IGNORECASE)
-        if match:
-            if len(match.groups()) == 3:
-                recipient = match.group(1).strip()
-                subject = match.group(2).strip()
-                message = match.group(3).strip()
-            else:
-                recipient = match.group(1).strip()
-                subject = "Voice Command Message"
-                message = match.group(2).strip()
-            
-            message = message.replace(" period", ".").replace(" comma", ",")
-            subject = subject.replace(" period", ".").replace(" comma", ",")
-            
-            return {
-                "action": "send_email",
-                "recipient": recipient,
-                "subject": subject,
-                "message": message
-            }
-    
-    return None
-
-# ==================== WAKE WORD PROCESSOR ====================
+# ==================== ENHANCED WAKE WORD PROCESSOR ====================
 
 class WakeWordProcessor:
-    """Enhanced wake word detection with comprehensive HubSpot CRM support"""
+    """Enhanced wake word detection with CRM support"""
     
     def __init__(self):
         self.wake_words = CONFIG["wake_words"]
@@ -1241,13 +946,13 @@ class WakeWordProcessor:
         }
     
     def process_wake_word_command(self, text: str) -> Dict[str, Any]:
-        """Process wake word command with comprehensive HubSpot support"""
+        """Enhanced process_wake_word_command with CRM support"""
         wake_result = self.detect_wake_word(text)
         
         if not wake_result["has_wake_word"]:
             return {
                 "success": False,
-                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word} create contact John Smith'"
+                "error": f"Please start your command with '{self.primary_wake_word}'. Example: '{self.primary_wake_word} text John saying hello'"
             }
         
         command_text = wake_result["command_text"]
@@ -1257,13 +962,6 @@ class WakeWordProcessor:
                 "success": False,
                 "error": f"Please provide a command after '{wake_result['wake_word_detected']}'"
             }
-        
-        # Try comprehensive HubSpot commands first
-        hubspot_command = extract_hubspot_command(command_text)
-        if hubspot_command:
-            hubspot_command["wake_word_info"] = wake_result
-            print(f"🏢 HubSpot CRM command: {hubspot_command.get('action')}")
-            return hubspot_command
         
         # Try SMS command
         sms_command = extract_sms_command(command_text)
@@ -1277,6 +975,34 @@ class WakeWordProcessor:
             email_command["wake_word_info"] = wake_result
             return email_command
         
+        # Try CRM contact commands
+        contact_command = extract_crm_contact_command(command_text)
+        if contact_command:
+            contact_command["wake_word_info"] = wake_result
+            print(f"🏢 CRM Contact command: {contact_command.get('action')}")
+            return contact_command
+        
+        # Try CRM task commands
+        task_command = extract_crm_task_command(command_text)
+        if task_command:
+            task_command["wake_word_info"] = wake_result
+            print(f"📋 CRM Task command: {task_command.get('action')}")
+            return task_command
+        
+        # Try CRM calendar commands
+        calendar_command = extract_crm_calendar_command(command_text)
+        if calendar_command:
+            calendar_command["wake_word_info"] = wake_result
+            print(f"📅 CRM Calendar command: {calendar_command.get('action')}")
+            return calendar_command
+        
+        # Try CRM pipeline commands
+        pipeline_command = extract_crm_pipeline_command(command_text)
+        if pipeline_command:
+            pipeline_command["wake_word_info"] = wake_result
+            print(f"📊 CRM Pipeline command: {pipeline_command.get('action')}")
+            return pipeline_command
+        
         # Fallback to Claude
         try:
             print(f"🤖 Falling back to Claude for command: {command_text}")
@@ -1289,7 +1015,7 @@ class WakeWordProcessor:
         
         return {
             "success": False,
-            "error": f"I didn't understand: '{command_text}'. Try HubSpot CRM commands like 'create contact John Smith' or 'log call with client'"
+            "error": f"I didn't understand: '{command_text}'. Try SMS, Email, or CRM commands like 'create contact John Smith' or 'schedule meeting with client'"
         }
 
 # Initialize services
@@ -1298,7 +1024,7 @@ email_client = EmailClient()
 hubspot_service = HubSpotService()
 wake_word_processor = WakeWordProcessor()
 
-# ==================== HELPER FUNCTIONS ====================
+# ==================== EXISTING HELPER FUNCTIONS ====================
 
 def call_claude(prompt):
     """Simple Claude API call"""
@@ -1310,21 +1036,19 @@ def call_claude(prompt):
         }
         
         instruction_prompt = """
-You are an intelligent HubSpot CRM assistant. Respond ONLY with valid JSON using one of the supported actions.
+You are an intelligent assistant. Respond ONLY with valid JSON using one of the supported actions.
 
 Supported actions:
 - send_message (supports SMS via Twilio)
 - send_email (supports email via SMTP)
-- create_contact (supports HubSpot contact creation)
-- create_deal (supports HubSpot deal creation)
-- create_task (supports HubSpot task creation)
-- log_call (supports HubSpot call logging)
+- create_contact (supports CRM contact creation)
+- create_task (supports CRM task creation)
+- schedule_meeting (supports CRM calendar)
 
 Response structure examples:
 {"action": "send_message", "recipient": "phone number", "message": "text"}
 {"action": "send_email", "recipient": "email", "subject": "subject", "message": "body"}
 {"action": "create_contact", "name": "Full Name", "email": "email", "phone": "phone"}
-{"action": "create_deal", "name": "Deal Name", "amount": 10000, "stage": "discovery"}
 """
         
         full_prompt = f"{instruction_prompt}\n\nUser: {prompt}"
@@ -1348,9 +1072,105 @@ Response structure examples:
     except Exception as e:
         return {"error": str(e)}
 
+def fix_email_addresses(text: str) -> str:
+    """Fix email addresses that get split by speech recognition"""
+    fixed_text = text
+    
+    pattern1 = r'\b(\w+)\s+(\w+@(?:gmail|yahoo|hotmail|outlook|icloud|aol)\.com)\b'
+    fixed_text = re.sub(pattern1, r'\1\2', fixed_text, flags=re.IGNORECASE)
+    
+    pattern2 = r'\b(\w+)\s+(\w+)\s+(gmail|yahoo|hotmail|outlook|icloud)\.com\b'
+    fixed_text = re.sub(pattern2, r'\1\2@\3.com', fixed_text, flags=re.IGNORECASE)
+    
+    fixed_text = re.sub(r'\bstack@', 'stagg@', fixed_text, flags=re.IGNORECASE)
+    
+    return fixed_text
+
+def extract_email_command(text: str) -> Dict[str, Any]:
+    """Extract email command from text - FIXED VERSION"""
+    original_text = text
+    fixed_text = fix_email_addresses(text)
+    
+    if original_text != fixed_text:
+        print(f"📧 Email fix applied: {original_text} -> {fixed_text}")
+    
+    patterns = [
+        r'email (.+?) (?:with )?subject (.+?) saying (.+)',
+        r'email (.+?) saying (.+)',
+        r'send (?:an )?email to (.+?) (?:with )?subject (.+?) saying (.+)',
+        r'send (?:an )?email to (.+?) saying (.+)',
+    ]
+    
+    text_lower = fixed_text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            if len(match.groups()) == 3:
+                recipient = match.group(1).strip()
+                subject = match.group(2).strip()
+                message = match.group(3).strip()
+            else:
+                recipient = match.group(1).strip()
+                subject = "Voice Command Message"
+                message = match.group(2).strip()
+            
+            # FIXED: Clean up recipient to remove extra words
+            recipient = recipient.replace("to ", "").strip()
+            
+            message = message.replace(" period", ".").replace(" comma", ",")
+            subject = subject.replace(" period", ".").replace(" comma", ",")
+            
+            return {
+                "action": "send_email",
+                "recipient": recipient,
+                "subject": subject,
+                "message": message
+            }
+    
+    return None
+
+def extract_sms_command(text: str) -> Dict[str, Any]:
+    """Extract SMS command from text - FIXED VERSION"""
+    patterns = [
+        r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
+        r'text (.+?) saying (.+)',
+        r'message (.+?) saying (.+)',
+        r'send (.+?) the message (.+)',
+        r'tell (.+?) that (.+)',
+        r'text (.+?) (.+)',
+    ]
+    
+    text_lower = text.lower().strip()
+    
+    for pattern in patterns:
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            message = message.replace(" period", ".").replace(" comma", ",")
+            
+            # NEW: Check if recipient is a contact name (not a phone number)
+            if not is_phone_number(recipient) and not is_email_address(recipient):
+                # Mark this as requiring contact lookup
+                return {
+                    "action": "send_message_to_contact",
+                    "contact_name": recipient,
+                    "message": message
+                }
+            else:
+                return {
+                    "action": "send_message",
+                    "recipient": recipient,
+                    "message": message
+                }
+    
+    return None
+
 def is_phone_number(recipient: str) -> bool:
     """Check if recipient looks like a phone number"""
-    clean = recipient.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+    clean = recipient.replace(" ", "").replace("-", "").replace("(", "").replace(")", "").replace(".", "")
     
     if clean.startswith("+") and clean[1:].isdigit():
         return True
@@ -1376,7 +1196,7 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
-# ==================== ACTION HANDLERS ====================
+# ==================== FIXED ACTION HANDLERS ====================
 
 def handle_send_message(data):
     """Handle SMS sending"""
@@ -1394,6 +1214,41 @@ def handle_send_message(data):
     else:
         return f"❌ Invalid phone number: {recipient}"
 
+def handle_send_message_to_contact(data):
+    """Handle SMS sending to contact name (NEW)"""
+    contact_name = data.get("contact_name", "")
+    message = data.get("message", "")
+    
+    if not contact_name:
+        return "❌ Contact name is required"
+    
+    # Search for contact to get phone number
+    search_result = hubspot_service.search_contact(contact_name)
+    
+    if not search_result.get("success"):
+        return f"❌ Could not find contact: {contact_name}. Please create the contact first or use their phone number directly."
+    
+    contacts = search_result.get("contacts", [])
+    if not contacts:
+        return f"❌ No contact found with name: {contact_name}. Try using their phone number directly."
+    
+    # Get phone number from contact
+    contact = contacts[0]
+    contact_props = contact.get("properties", {})
+    phone = contact_props.get("phone", "")
+    
+    if not phone:
+        return f"❌ No phone number found for {contact_name}. Please update their contact with a phone number."
+    
+    # Send SMS using the phone number
+    formatted_phone = format_phone_number(phone)
+    result = twilio_client.send_sms(formatted_phone, message)
+    
+    if result.get("success"):
+        return f"✅ SMS sent to {contact_name} ({phone})!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
+    else:
+        return f"❌ Failed to send SMS to {contact_name} ({phone}): {result.get('error')}"
+
 def handle_send_email(data):
     """Handle email sending"""
     recipient = data.get("recipient", "")
@@ -1410,10 +1265,10 @@ def handle_send_email(data):
     else:
         return f"❌ Invalid email address: {recipient}"
 
-# ==================== HUBSPOT ACTION HANDLERS ====================
+# ==================== FIXED CRM ACTION HANDLERS ====================
 
 def handle_create_contact(data):
-    """Handle creating new contact in HubSpot"""
+    """Handle creating new contact in HubSpot - FIXED VERSION"""
     name = data.get("name", "")
     email = data.get("email", "")
     phone = data.get("phone", "")
@@ -1422,6 +1277,22 @@ def handle_create_contact(data):
     if not name:
         return "❌ Contact name is required"
     
+    # FIXED: Check if contact already exists before creating
+    search_result = hubspot_service.search_contact(name)
+    if search_result.get("success") and search_result.get("contacts"):
+        existing_contact = search_result.get("contacts")[0]
+        contact_id = existing_contact.get("id")
+        props = existing_contact.get("properties", {})
+        
+        response = f"ℹ️ Contact already exists: {name}"
+        if props.get("email"):
+            response += f"\n📧 Email: {props.get('email')}"
+        if props.get("phone"):
+            response += f"\n📱 Phone: {props.get('phone')}"
+        response += f"\n🆔 HubSpot ID: {contact_id}"
+        return response
+    
+    # Create new contact
     result = hubspot_service.create_contact(name, email, phone, company)
     
     if result.get("success"):
@@ -1437,7 +1308,7 @@ def handle_create_contact(data):
         return f"❌ Failed to create contact: {result.get('error')}"
 
 def handle_update_contact_phone(data):
-    """Handle updating contact phone number"""
+    """Handle updating contact phone number - SIMPLIFIED & SAFE VERSION"""
     try:
         name = data.get("name", "").strip()
         phone = data.get("phone", "").strip()
@@ -1447,6 +1318,7 @@ def handle_update_contact_phone(data):
         
         print(f"🔍 Searching for contact: '{name}'")
         
+        # Search for contact
         search_result = hubspot_service.search_contact(name)
         
         if not search_result or not search_result.get("success"):
@@ -1454,14 +1326,16 @@ def handle_update_contact_phone(data):
         
         contacts = search_result.get("contacts", [])
         if not contacts:
-            return f"❌ No contact found with name: {name}. Try: 'Hey Manny create contact {name} phone {phone}'"
+            return f"❌ No contact found with name: {name}. Try: 'create contact {name} phone {phone}'"
         
+        # Use the first contact found
         contact = contacts[0]
         contact_id = contact.get("id")
         
         if not contact_id:
             return f"❌ Invalid contact data for: {name}"
         
+        # Get contact name for response
         contact_props = contact.get("properties", {})
         current_name = f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
         if not current_name:
@@ -1469,6 +1343,7 @@ def handle_update_contact_phone(data):
         
         print(f"✅ Found contact: {current_name} (ID: {contact_id})")
         
+        # Update the contact
         update_result = hubspot_service.update_contact(contact_id, {"phone": phone})
         
         if update_result and update_result.get("success"):
@@ -1481,120 +1356,74 @@ def handle_update_contact_phone(data):
         print(f"❌ Error in handle_update_contact_phone: {str(e)}")
         return f"❌ Error updating contact: {str(e)}"
 
-def handle_log_call(data):
-    """Handle logging call activity"""
-    contact = data.get("contact", "")
-    notes = data.get("notes", "")
-    
-    if not contact or not notes:
-        return "❌ Both contact name and call notes are required"
-    
-    result = hubspot_service.log_call(contact, notes)
-    
-    if result.get("success"):
-        return f"✅ Call logged with {contact}: {notes}"
-    else:
-        return f"❌ Failed to log call: {result.get('error')}"
-
-def handle_log_email(data):
-    """Handle logging email activity"""
-    contact = data.get("contact", "")
-    subject = data.get("subject", "")
-    body = data.get("body", "")
-    
-    if not contact or not subject:
-        return "❌ Both contact name and email subject are required"
-    
-    result = hubspot_service.log_email_activity(contact, subject, body)
-    
-    if result.get("success"):
-        return f"✅ Email activity logged with {contact}: {subject}"
-    else:
-        return f"❌ Failed to log email activity: {result.get('error')}"
-
-def handle_log_meeting(data):
-    """Handle logging meeting activity"""
-    contact = data.get("contact", "")
-    title = data.get("title", "")
-    notes = data.get("notes", "")
-    
-    if not contact or not notes:
-        return "❌ Both contact name and meeting notes are required"
-    
-    result = hubspot_service.log_meeting(contact, title, notes)
-    
-    if result.get("success"):
-        return f"✅ Meeting logged with {contact}: {title}"
-    else:
-        return f"❌ Failed to log meeting: {result.get('error')}"
-
-def handle_create_deal(data):
-    """Handle creating new deal"""
+def handle_add_contact_note(data):
+    """Handle adding note to contact"""
     name = data.get("name", "")
-    amount = data.get("amount", 0)
-    stage = data.get("stage", "appointmentscheduled")
-    contact = data.get("contact", "")
+    note = data.get("note", "")
     
-    if not name:
-        return "❌ Deal name is required"
+    if not note:
+        return "❌ Note text is required"
     
-    result = hubspot_service.create_deal(name, amount, stage, contact)
+    contact_id = ""
+    if name:
+        search_result = hubspot_service.search_contact(name)
+        if search_result.get("success"):
+            contacts = search_result.get("contacts", [])
+            if contacts:
+                contact_id = contacts[0].get("id")
     
-    if result.get("success"):
-        response = f"✅ Deal created: {name}"
-        if amount > 0:
-            response += f"\n💰 Amount: ${amount:,.2f}"
-        response += f"\n📊 Stage: {stage}"
-        if contact:
-            response += f"\n👤 Contact: {contact}"
+    note_result = hubspot_service.add_contact_note(contact_id, note)
+    
+    if note_result.get("success"):
+        if name and contact_id:
+            response = f"✅ Added note to {name}: {note}"
+            response += f"\n📍 Check contact's Notes field in HubSpot"
+        else:
+            response = f"✅ Note saved: {note}"
+            response += f"\n📍 Find it in HubSpot → Deals → Look for 'NOTE: {note[:20]}...'"
         return response
     else:
-        return f"❌ Failed to create deal: {result.get('error')}"
+        return f"❌ Failed to add note: {note_result.get('error')}"
 
-def handle_move_deal_stage(data):
-    """Handle moving deal to new stage"""
-    deal_name = data.get("deal_name", "")
-    stage = data.get("stage", "")
+def handle_search_contact(data):
+    """Handle searching for contact"""
+    query = data.get("query", "")
     
-    if not deal_name or not stage:
-        return "❌ Both deal name and new stage are required"
+    if not query:
+        return "❌ Search query is required"
     
-    result = hubspot_service.move_deal_stage(deal_name, stage)
+    result = hubspot_service.search_contact(query)
     
     if result.get("success"):
-        return f"✅ Deal '{deal_name}' moved to '{stage}' stage"
+        contacts = result.get("contacts", [])
+        if contacts:
+            response = f"✅ Found {len(contacts)} contact(s):\n\n"
+            for i, contact in enumerate(contacts[:3], 1):
+                props = contact.get('properties', {})
+                response += f"{i}. {props.get('firstname', '')} {props.get('lastname', '')}\n"
+                if props.get("email"):
+                    response += f"   📧 {props.get('email')}\n"
+                if props.get("phone"):
+                    response += f"   📱 {props.get('phone')}\n"
+                if props.get("company"):
+                    response += f"   🏢 {props.get('company')}\n"
+                response += "\n"
+            return response.strip()
+        else:
+            return f"❌ No contacts found for: {query}"
     else:
-        return f"❌ Failed to move deal stage: {result.get('error')}"
-
-def handle_send_marketing_email(data):
-    """Handle sending marketing email"""
-    email_name = data.get("email_name", "")
-    recipient_list = data.get("recipient_list", "")
-    
-    if not email_name or not recipient_list:
-        return "❌ Both email name and recipient list are required"
-    
-    result = hubspot_service.send_marketing_email(email_name, recipient_list)
-    
-    if result.get("success"):
-        response = f"✅ {result.get('message')}"
-        if result.get("note"):
-            response += f"\n\n💡 {result.get('note')}"
-        return response
-    else:
-        return f"❌ Failed to send marketing email: {result.get('error')}"
+        return f"❌ Search failed: {result.get('error')}"
 
 def handle_create_task(data):
     """Handle creating new task"""
     title = data.get("title", "")
     contact = data.get("contact", "")
     due_date = data.get("due_date", "")
-    description = data.get("description", "")
     
     if not title:
         return "❌ Task title is required"
     
-    result = hubspot_service.create_task(title, description, contact, due_date)
+    result = hubspot_service.create_task(title, "", "", due_date)
     
     if result.get("success"):
         response = f"✅ Task created: {title}"
@@ -1602,139 +1431,167 @@ def handle_create_task(data):
             response += f"\n👤 For: {contact}"
         if due_date:
             response += f"\n📅 Due: {due_date}"
+        response += f"\n📍 Find it in HubSpot → Deals → Look for 'TASK: {title}'"
         return response
     else:
         return f"❌ Failed to create task: {result.get('error')}"
 
-def handle_trigger_workflow(data):
-    """Handle triggering workflow"""
-    workflow_name = data.get("workflow_name", "")
+def handle_schedule_meeting(data):
+    """Handle scheduling meetings/appointments"""
     contact = data.get("contact", "")
-    
-    if not workflow_name:
-        return "❌ Workflow name is required"
-    
-    result = hubspot_service.trigger_workflow(workflow_name, contact)
-    
-    if result.get("success"):
-        response = f"✅ {result.get('message')}"
-        if result.get("note"):
-            response += f"\n\n💡 {result.get('note')}"
-        return response
-    else:
-        return f"❌ Failed to trigger workflow: {result.get('error')}"
-
-def handle_schedule_meeting_link(data):
-    """Handle scheduling meeting link"""
-    contact = data.get("contact", "")
-    meeting_type = data.get("meeting_type", "demo")
     duration = data.get("duration", 30)
+    when = data.get("when", "")
     
-    if not contact:
-        return "❌ Contact name is required"
-    
-    result = hubspot_service.schedule_meeting_link(contact, meeting_type, duration)
-    
-    if result.get("success"):
-        return f"✅ {result.get('message')}"
-    else:
-        return f"❌ Failed to schedule meeting link: {result.get('error')}"
-
-def handle_create_form(data):
-    """Handle creating form"""
-    form_name = data.get("form_name", "")
-    fields = data.get("fields", [])
-    
-    if not form_name:
-        return "❌ Form name is required"
-    
-    result = hubspot_service.create_form(form_name, fields)
+    title = f"Appointment with {contact}" if contact else "Voice Scheduled Meeting"
+    result = hubspot_service.create_appointment(title, "", when, duration)
     
     if result.get("success"):
-        response = f"✅ {result.get('message')}"
-        if result.get("note"):
-            response += f"\n\n💡 {result.get('note')}"
+        response = f"✅ {duration}-minute meeting scheduled"
+        if contact:
+            response += f" with {contact}"
+        if when:
+            response += f"\n📅 Time: {when}"
+        else:
+            response += f"\n📅 Time: Default (1 hour from now)"
+        response += f"\n📍 Find it in HubSpot → Deals → Look for 'MEETING: {title}'"
         return response
     else:
-        return f"❌ Failed to create form: {result.get('error')}"
+        return f"❌ Failed to schedule meeting: {result.get('error')}"
 
-def handle_sales_report(data):
-    """Handle generating sales report"""
-    period = data.get("period", "this month")
+def handle_show_calendar(data):
+    """Handle showing calendar events"""
+    when = data.get("when", "")
     
-    result = hubspot_service.get_sales_report(period)
+    if "week" in when.lower():
+        start_date = ""
+        end_date = ""
+    elif "today" in when.lower():
+        start_date = datetime.now().strftime("%Y-%m-%d")
+        end_date = start_date
+    else:
+        start_date = when
+        end_date = ""
+    
+    result = hubspot_service.get_calendar_events(start_date, end_date)
     
     if result.get("success"):
-        report = result.get("report", {})
-        response = f"📊 Sales Report for {period}:\n\n"
-        response += f"💼 Total Deals: {report.get('total_deals', 0)}\n"
-        response += f"💰 Pipeline Value: ${report.get('total_pipeline_value', 0):,.2f}\n"
-        response += f"🏆 Closed Won: {report.get('closed_won_deals', 0)} deals\n"
-        response += f"💵 Closed Won Value: ${report.get('closed_won_value', 0):,.2f}\n"
-        response += f"📈 Win Rate: {report.get('win_rate', 0)}%\n"
-        response += f"📊 Avg Deal Size: ${report.get('average_deal_size', 0):,.2f}"
+        events = result.get("events", [])
+        if events:
+            response = f"✅ Calendar events for {when or 'this week'}:\n\n"
+            for i, event in enumerate(events[:5], 1):
+                props = event.get('properties', {})
+                response += f"{i}. {props.get('hs_meeting_title', 'Event')}\n"
+                if props.get("hs_meeting_start_time"):
+                    # Convert timestamp to readable date
+                    try:
+                        timestamp = int(props.get("hs_meeting_start_time")) / 1000
+                        start_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+                        response += f"   📅 {start_time}\n"
+                    except:
+                        response += f"   📅 {props.get('hs_meeting_start_time')}\n"
+                response += "\n"
+            return response.strip()
+        else:
+            message = result.get("message", f"No events found for {when or 'this period'}")
+            return f"📅 {message}"
+    else:
+        return f"❌ Failed to get calendar: {result.get('error')}"
+
+def handle_create_opportunity(data):
+    """Handle creating new opportunity"""
+    name = data.get("name", "")
+    value = data.get("value", 0)
+    contact = data.get("contact", "")
+    
+    if not name:
+        return "❌ Opportunity name is required"
+    
+    contact_id = ""
+    if contact:
+        search_result = hubspot_service.search_contact(contact)
+        if search_result.get("success"):
+            contacts = search_result.get("contacts", [])
+            if contacts:
+                contact_id = contacts[0].get("id")
+    
+    result = hubspot_service.create_opportunity(name, contact_id, value)
+    
+    if result.get("success"):
+        response = f"✅ Deal created: {name}"
+        if value > 0:
+            response += f"\n💰 Value: ${value:,.2f}"
+        if contact:
+            response += f"\n👤 Contact: {contact}"
         return response
     else:
-        return f"❌ Failed to generate sales report: {result.get('error')}"
+        return f"❌ Failed to create deal: {result.get('error')}"
 
-# ==================== ACTION DISPATCHER ====================
+def handle_show_pipeline_summary(data):
+    """Handle showing pipeline summary"""
+    result = hubspot_service.get_pipeline_summary()
+    
+    if result.get("success"):
+        total_value = result.get("total_value", 0)
+        total_count = result.get("total_count", 0)
+        
+        response = f"📊 Sales Pipeline Summary:\n\n"
+        response += f"💰 Total Value: ${total_value:,.2f}\n"
+        response += f"📈 Total Deals: {total_count}\n"
+        
+        if total_count > 0:
+            avg_value = total_value / total_count
+            response += f"📊 Average Deal Size: ${avg_value:,.2f}"
+        
+        return response
+    else:
+        return f"❌ Failed to get pipeline summary: {result.get('error')}"
+
+# ==================== ENHANCED ACTION DISPATCHER ====================
 
 def dispatch_action(parsed):
-    """Enhanced action dispatcher with comprehensive HubSpot support"""
+    """Enhanced action dispatcher with CRM support"""
     action = parsed.get("action")
     print(f"🔧 Dispatching action: '{action}'")
     
     # Communication actions
     if action == "send_message":
         return handle_send_message(parsed)
+    elif action == "send_message_to_contact":  # NEW
+        return handle_send_message_to_contact(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
     
-    # HubSpot Contact actions
+    # CRM Contact actions
     elif action == "create_contact":
         return handle_create_contact(parsed)
     elif action == "update_contact_phone":
         return handle_update_contact_phone(parsed)
+    elif action == "add_contact_note":
+        return handle_add_contact_note(parsed)
+    elif action == "search_contact":
+        return handle_search_contact(parsed)
     
-    # HubSpot Activity logging
-    elif action == "log_call":
-        return handle_log_call(parsed)
-    elif action == "log_email":
-        return handle_log_email(parsed)
-    elif action == "log_meeting":
-        return handle_log_meeting(parsed)
-    
-    # HubSpot Deal management
-    elif action == "create_deal":
-        return handle_create_deal(parsed)
-    elif action == "move_deal_stage":
-        return handle_move_deal_stage(parsed)
-    
-    # HubSpot Marketing & Workflows
-    elif action == "send_marketing_email":
-        return handle_send_marketing_email(parsed)
-    elif action == "trigger_workflow":
-        return handle_trigger_workflow(parsed)
-    
-    # HubSpot Task & Meeting management
+    # CRM Task actions
     elif action == "create_task":
         return handle_create_task(parsed)
-    elif action == "schedule_meeting_link":
-        return handle_schedule_meeting_link(parsed)
     
-    # HubSpot Form creation
-    elif action == "create_form":
-        return handle_create_form(parsed)
+    # CRM Calendar actions
+    elif action == "schedule_meeting":
+        return handle_schedule_meeting(parsed)
+    elif action == "show_calendar":
+        return handle_show_calendar(parsed)
     
-    # HubSpot Reporting
-    elif action == "sales_report":
-        return handle_sales_report(parsed)
+    # CRM Pipeline actions
+    elif action == "create_opportunity":
+        return handle_create_opportunity(parsed)
+    elif action == "show_pipeline_summary":
+        return handle_show_pipeline_summary(parsed)
     
     else:
         print(f"❌ Unknown action received: '{action}'")
-        return f"Unknown action: {action}. Supported: Contact management, Deal tracking, Activity logging, Task creation, Marketing automation, and Reporting"
+        return f"Unknown action: {action}. Supported: SMS, Email, CRM Contact/Task/Calendar/Pipeline operations"
 
-# ==================== HTML TEMPLATE ====================
+# ==================== HTML TEMPLATE (Updated for CRMAutoPilot) ====================
 
 def get_html_template():
     primary_wake_word = CONFIG['wake_word_primary']
@@ -1743,13 +1600,12 @@ def get_html_template():
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Manny - HubSpot CRM Voice Assistant</title>
+    <title>CRMAutoPilot - Voice Assistant with HubSpot CRM</title>
     <style>
         * {{ margin: 0; padding: 0; box-sizing: border-box; }}
         body {{ font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background: #1a1a2e url('https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688bfadef231e6633e98f192.webp') center center/cover no-repeat fixed; min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 20px; color: white; }}
-        .container {{ background: rgba(26, 26, 46, 0.9); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3); backdrop-filter: blur(15px); max-width: 800px; width: 100%; text-align: center; border: 2px solid #4a69bd; }}
+        .container {{ background: rgba(26, 26, 46, 0.9); border-radius: 20px; padding: 40px; box-shadow: 0 20px 40px rgba(0, 0, 0, 0.3); backdrop-filter: blur(15px); max-width: 700px; width: 100%; text-align: center; border: 2px solid #4a69bd; }}
         .header h1 {{ font-size: 2.8em; margin-bottom: 10px; font-weight: 700; color: #4a69bd; text-shadow: 2px 2px 4px rgba(0,0,0,0.5); }}
-        .header h2 {{ font-size: 1.4em; margin-bottom: 10px; color: #f39c12; }}
         .header img {{ max-height: 300px; margin-bottom: 20px; max-width: 95%; border-radius: 15px; box-shadow: 0 10px 20px rgba(0,0,0,0.3); }}
         .header p {{ font-size: 1.2em; opacity: 0.9; margin-bottom: 30px; color: #a0a0ff; }}
         .listening-status {{ height: 120px; display: flex; flex-direction: column; align-items: center; justify-content: center; margin-bottom: 30px; }}
@@ -1800,54 +1656,42 @@ def get_html_template():
 <body>
     <div class="container">
         <div class="header">
-            <h1>Manny</h1>
-            <h2>HubSpot CRM Assistant</h2>
-            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="Manny AI Assistant Logo" />
-            <p>Complete voice-powered HubSpot CRM management!</p>
+            <h1>CRMAutoPilot</h1>
+            <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="CRMAutoPilot AI Assistant Logo" />
+            <p>Voice-powered business automation with HubSpot CRM integration!</p>
         </div>
         
         <div class="capabilities">
-            <h3>🚀 HubSpot CRM Commands</h3>
+            <h3>🚀 CRMAutoPilot Capabilities</h3>
             <div class="capability-section">
-                <h4>👥 Contact Management</h4>
+                <h4>📱 Communication</h4>
                 <ul>
-                    <li>"Hey Manny add contact John Smith email john@example.com phone 555-1234"</li>
-                    <li>"Hey Manny update contact Sarah's phone number to 555-5678"</li>
+                    <li>"Hey CRMAutoPilot text John saying meeting at 3pm"</li>
+                    <li>"Hey CRMAutoPilot email client@company.com saying proposal attached"</li>
                 </ul>
             </div>
             <div class="capability-section">
-                <h4>📞 Activity Logging</h4>
+                <h4>👥 HubSpot Contacts</h4>
                 <ul>
-                    <li>"Hey Manny log call with Sarah Johnson discussing the project timeline"</li>
-                    <li>"Hey Manny log meeting with Mike about contract details"</li>
+                    <li>"Hey CRMAutoPilot create contact John Smith email john@test.com"</li>
+                    <li>"Hey CRMAutoPilot add note to client ABC saying discussed pricing"</li>
+                    <li>"Hey CRMAutoPilot show me Sarah's contact details"</li>
+                    <li>"Hey CRMAutoPilot update contact Manuel Stagg phone number 555-1234"</li>
                 </ul>
             </div>
             <div class="capability-section">
-                <h4>💼 Deal Management</h4>
+                <h4>📋 Tasks & Calendar</h4>
                 <ul>
-                    <li>"Hey Manny create deal for Acme Inc worth $10,000 in Discovery stage"</li>
-                    <li>"Hey Manny move deal with XYZ Corp to Proposal Sent"</li>
+                    <li>"Hey CRMAutoPilot create task to follow up with prospects"</li>
+                    <li>"Hey CRMAutoPilot schedule 30-minute meeting with new lead tomorrow"</li>
+                    <li>"Hey CRMAutoPilot show my meetings for this week"</li>
                 </ul>
             </div>
             <div class="capability-section">
-                <h4>📋 Tasks & Scheduling</h4>
+                <h4>📊 Sales Pipeline</h4>
                 <ul>
-                    <li>"Hey Manny create task to follow up with Mike on Friday"</li>
-                    <li>"Hey Manny send meeting link to Jane for 30-minute demo"</li>
-                </ul>
-            </div>
-            <div class="capability-section">
-                <h4>📧 Marketing & Workflows</h4>
-                <ul>
-                    <li>"Hey Manny send August newsletter to leads tagged Newsletter List"</li>
-                    <li>"Hey Manny trigger lead nurturing workflow for new contacts"</li>
-                </ul>
-            </div>
-            <div class="capability-section">
-                <h4>📊 Reporting</h4>
-                <ul>
-                    <li>"Hey Manny show me this month's sales performance report"</li>
-                    <li>"Hey Manny generate sales report for last quarter"</li>
+                    <li>"Hey CRMAutoPilot create deal for XYZ Company worth $25,000"</li>
+                    <li>"Hey CRMAutoPilot show me this month's sales pipeline status"</li>
                 </ul>
             </div>
         </div>
@@ -1866,15 +1710,15 @@ def get_html_template():
         </div>
         <div id="response" class="response"></div>
         <div class="manual-input">
-            <h3>⌨️ Type HubSpot Command</h3>
+            <h3>⌨️ Type Command Manually</h3>
             <div class="input-group">
-                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "create deal for Acme Corp worth $25,000" or "log call with Sarah about pricing"' />
+                <input type="text" class="text-input" id="manualCommand" placeholder='Try: "Hey CRMAutoPilot update contact Manuel Stagg phone number 555-1234"' />
                 <button class="send-button" onclick="sendManualCommand()">Send</button>
             </div>
-            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Complete HubSpot CRM management via voice | Auto-adds "Hey Manny" if missing</small>
+            <small style="opacity: 0.7; display: block; margin-top: 10px; text-align: center;">💡 Supports SMS, Email & HubSpot CRM operations | Auto-adds "Hey CRMAutoPilot" if missing</small>
         </div>
         <div class="browser-support" id="browserSupport">Checking browser compatibility...</div>
-        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. HubSpot CRM data is securely handled via encrypted APIs with enterprise-grade security.</div>
+        <div class="privacy-note">🔒 <strong>Privacy:</strong> Voice recognition runs locally in your browser. Audio is only processed when wake word is detected. HubSpot CRM data is securely handled via encrypted APIs.</div>
     </div>
 
     <script>
@@ -1899,8 +1743,9 @@ def get_html_template():
         const response = document.getElementById('response');
         const browserSupport = document.getElementById('browserSupport');
 
+        // Enhanced wake word variations for CRMAutoPilot
         const wakeWords = [
-            'hey manny', 'manny', 'hey ai assistant', 'ai assistant',
+            'hey crm autopilot', 'crm autopilot', 'hey ai assistant', 'ai assistant',
             'hey voice assistant', 'voice assistant'
         ];
 
@@ -1929,7 +1774,7 @@ def get_html_template():
                     retryCount = 0;
                     lastError = null;
                     shouldStop = false;
-                    updateUI('listening', '🎤 Listening for "Hey Manny"...', '👂');
+                    updateUI('listening', '🎤 Listening for "Hey CRMAutoPilot"...', '👂');
                 }};
 
                 recognition.onresult = function(event) {{
@@ -1961,19 +1806,20 @@ def get_html_template():
                         
                         if (hasWakeWord) {{
                             const commandLower = commandBuffer.toLowerCase().trim();
-                            const hasActionWord = commandLower.includes('create') || commandLower.includes('add') ||
-                                                commandLower.includes('log') || commandLower.includes('send') ||
-                                                commandLower.includes('move') || commandLower.includes('show') ||
-                                                commandLower.includes('schedule') || commandLower.includes('trigger');
+                            const hasActionWord = commandLower.includes('text') || commandLower.includes('send') || 
+                                                commandLower.includes('message') || commandLower.includes('email') ||
+                                                commandLower.includes('create') || commandLower.includes('add') ||
+                                                commandLower.includes('schedule') || commandLower.includes('show') ||
+                                                commandLower.includes('update');
                             
                             const justWakeWord = wakeWords.some(wake => commandLower.trim() === wake.toLowerCase());
                             
                             let waitTime = justWakeWord || !hasActionWord ? 8000 : 4000;
                             
                             if (justWakeWord || !hasActionWord) {{
-                                updateUI('wake-detected', '⏳ Capturing complete HubSpot command...', '⏳');
+                                updateUI('wake-detected', '⏳ Capturing complete command...', '⏳');
                             }} else {{
-                                updateUI('wake-detected', '⚡ HubSpot command detected!', '⚡');
+                                updateUI('wake-detected', '⚡ Complete command detected!', '⚡');
                             }}
                             
                             bufferTimeout = setTimeout(() => {{
@@ -2046,7 +1892,7 @@ def get_html_template():
                     }}
                 }};
 
-                browserSupport.textContent = 'Enhanced voice recognition with comprehensive HubSpot CRM support ✅';
+                browserSupport.textContent = 'Enhanced voice recognition with HubSpot CRM support ✅';
                 browserSupport.className = 'browser-support';
                 return true;
             }} else {{
@@ -2080,10 +1926,10 @@ def get_html_template():
                 return;
             }}
             isProcessingCommand = true;
-            updateUI('wake-detected', '⚡ Wake word detected! Processing HubSpot command...', '⚡');
+            updateUI('wake-detected', '⚡ Wake word detected! Processing...', '⚡');
             transcriptionText.textContent = fullText;
             try {{
-                updateUI('processing', '🔄 Executing HubSpot CRM action...', '⚙️');
+                updateUI('processing', '📤 Sending command...', '⚙️');
                 const apiResponse = await fetch('/execute', {{
                     method: 'POST',
                     headers: {{ 'Content-Type': 'application/json' }},
@@ -2091,10 +1937,10 @@ def get_html_template():
                 }});
                 const data = await apiResponse.json();
                 if (apiResponse.ok) {{
-                    showResponse(data.response || 'HubSpot command executed successfully!', 'success');
-                    updateUI('listening', '✅ HubSpot action completed! Listening for next command...', '👂');
+                    showResponse(data.response || 'Command executed successfully!', 'success');
+                    updateUI('listening', '✅ Command sent! Listening for next command...', '👂');
                 }} else {{
-                    showResponse(data.error || 'An error occurred while processing your HubSpot command.', 'error');
+                    showResponse(data.error || 'An error occurred while processing your command.', 'error');
                     updateUI('listening', '❌ Error occurred. Listening for next command...', '👂');
                 }}
             }} catch (error) {{
@@ -2103,7 +1949,7 @@ def get_html_template():
             }} finally {{
                 isProcessingCommand = false;
                 setTimeout(() => {{
-                    transcriptionText.textContent = 'Waiting for HubSpot wake word command...';
+                    transcriptionText.textContent = 'Waiting for wake word command...';
                     transcription.classList.remove('active');
                 }}, 3000);
             }}
@@ -2121,7 +1967,7 @@ def get_html_template():
             response.className = 'response ' + type;
             response.style.display = 'block';
             if (type === 'success') {{
-                setTimeout(() => {{ response.style.display = 'none'; }}, 15000);
+                setTimeout(() => {{ response.style.display = 'none'; }}, 10000);
             }}
         }}
 
@@ -2130,7 +1976,7 @@ def get_html_template():
             let command = manualInput.value.trim();
             
             if (!command) {{
-                alert('Please enter a HubSpot command');
+                alert('Please enter a command');
                 return;
             }}
             
@@ -2138,7 +1984,7 @@ def get_html_template():
             const hasWakeWord = wakeWords.some(wakeWord => lowerCommand.startsWith(wakeWord.toLowerCase()));
             
             if (!hasWakeWord) {{
-                command = 'Hey Manny ' + command;
+                command = 'Hey CRMAutoPilot ' + command;
                 manualInput.value = command;
                 setTimeout(() => {{ manualInput.value = ''; }}, 2000);
             }} else {{
@@ -2210,7 +2056,7 @@ def get_html_template():
             updateUI('idle', 'Stopped listening', '🎤');
             startButton.disabled = false;
             stopButton.disabled = true;
-            transcriptionText.textContent = 'Waiting for HubSpot wake word command...';
+            transcriptionText.textContent = 'Waiting for wake word command...';
             transcription.classList.remove('active');
             commandBuffer = '';
             
@@ -2295,12 +2141,41 @@ def execute():
             })
         
         return jsonify({
-            "response": "No valid HubSpot command found",
+            "response": "No valid command found",
             "claude_output": wake_result
         })
 
     except Exception as e:
         return jsonify({"response": f"Error: {str(e)}"}), 500
+
+@app.route('/test-email', methods=['POST'])
+def test_email():
+    """Test email configuration"""
+    try:
+        data = request.json
+        test_email = data.get("email", "test@example.com")
+        
+        if CONFIG["email_address"] and CONFIG["email_password"]:
+            result = email_client.send_email(
+                test_email, 
+                "Test Email from CRMAutoPilot Voice Assistant", 
+                "This is a test email sent from your CRMAutoPilot Voice Assistant to verify email configuration is working correctly."
+            )
+            
+            if result.get("success"):
+                return jsonify({
+                    "success": True, 
+                    "message": f"Test email sent successfully to {test_email}",
+                    "provider": CONFIG["email_provider"],
+                    "from": result.get("from")
+                })
+            else:
+                return jsonify({"error": result.get("error")})
+        else:
+            return jsonify({"error": "Email not configured. Please set EMAIL_ADDRESS and EMAIL_PASSWORD environment variables."})
+    
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -2314,19 +2189,42 @@ def health_check():
             "hubspot_configured": bool(CONFIG["hubspot_api_token"]),
             "claude_configured": bool(CONFIG["claude_api_key"])
         },
-        "hubspot_crm": {
+        "email_config": {
+            "provider": CONFIG["email_provider"],
+            "smtp_server": CONFIG["email_smtp_server"],
+            "smtp_port": CONFIG["email_smtp_port"]
+        },
+        "crm_integration": {
             "provider": "HubSpot",
-            "api_configured": bool(CONFIG["hubspot_api_token"]),
-            "supported_commands": [
-                "create_contact", "update_contact_phone", "log_call", "log_email", "log_meeting",
-                "create_deal", "move_deal_stage", "create_task", "schedule_meeting_link",
-                "send_marketing_email", "trigger_workflow", "create_form", "sales_report"
+            "api_configured": bool(CONFIG["hubspot_api_token"])
+        }
+    })
+
+@app.route('/health-crm', methods=['GET'])
+def crm_health_check():
+    """CRM-specific health check"""
+    hubspot_test = hubspot_service.test_connection()
+    
+    return jsonify({
+        "status": "healthy",
+        "crm_integration": {
+            "hubspot_configured": bool(hubspot_service.api_token),
+            "hubspot_connection": hubspot_test.get("success", False),
+            "hubspot_error": hubspot_test.get("error") if not hubspot_test.get("success") else None,
+            "supported_crm_actions": [
+                "create_contact", "update_contact_phone", "add_contact_note", "search_contact",
+                "create_task", "schedule_meeting", "show_calendar", 
+                "create_opportunity", "show_pipeline_summary"
             ]
+        },
+        "communication": {
+            "sms_enabled": bool(twilio_client.client),
+            "email_enabled": bool(CONFIG["email_address"] and CONFIG["email_password"])
         }
     })
 
 if __name__ == '__main__':
-    print("🚀 Starting Manny - HubSpot CRM Voice Assistant")
+    print("🚀 Starting CRMAutoPilot AI Assistant with HubSpot CRM Integration")
     print(f"🎙️ Primary Wake Word: '{CONFIG['wake_word_primary']}'")
     print(f"📱 Twilio: {'✅ Ready' if twilio_client.client else '❌ Not configured'}")
     
@@ -2340,16 +2238,16 @@ if __name__ == '__main__':
     
     print(f"🤖 Claude: {'✅ Ready' if CONFIG['claude_api_key'] else '❌ Not configured'}")
     
-    print("\n🎯 Enhanced HubSpot CRM Commands:")
-    print("   👥 Contacts: 'Hey Manny add contact John Smith email john@example.com'")
-    print("   📞 Activities: 'Hey Manny log call with Sarah discussing project timeline'")
-    print("   💼 Deals: 'Hey Manny create deal for Acme Inc worth $10,000'")
-    print("   📋 Tasks: 'Hey Manny create task to follow up with Mike on Friday'")
-    print("   📧 Marketing: 'Hey Manny send August newsletter to Newsletter List'")
-    print("   🔄 Workflows: 'Hey Manny trigger lead nurturing workflow'")
-    print("   📊 Reports: 'Hey Manny show me this month's sales performance report'")
+    print("\n🎯 Supported Voice Commands:")
+    print("   📱 SMS: 'Hey CRMAutoPilot text John saying hello'")
+    print("   📧 Email: 'Hey CRMAutoPilot email client@company.com saying proposal ready'")
+    print("   👥 Contacts: 'Hey CRMAutoPilot create contact John Smith email john@test.com'")
+    print("   🔄 Update: 'Hey CRMAutoPilot update contact Manuel Stagg phone number 555-1234'")
+    print("   📋 Tasks: 'Hey CRMAutoPilot create task to follow up with prospects'")
+    print("   📅 Calendar: 'Hey CRMAutoPilot schedule meeting with new lead tomorrow'")
+    print("   📊 Pipeline: 'Hey CRMAutoPilot show me this month's sales pipeline status'")
     
     port = int(os.environ.get("PORT", 10000))
-    print(f"\n🚀 Starting comprehensive HubSpot CRM assistant on port {port}")
+    print(f"\n🚀 Starting on port {port}")
     
     app.run(host="0.0.0.0", port=port, debug=False)

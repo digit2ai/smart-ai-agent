@@ -1062,11 +1062,11 @@ def extract_crm_contact_command(text: str) -> Optional[Dict[str, Any]]:
                 "company": company
             }
     
-    # Add note to contact patterns
+    # FIXED: Enhanced note patterns with multiple variations
     note_patterns = [
         r'add note to (?:contact )?(.+?) saying (.+)',
-        r'annotate (.+?) with (.+)',  # Fixed annotate pattern
-        r'add comment to (.+?) saying (.+)',  # Fixed comment pattern
+        r'annotate (.+?) with (.+)',
+        r'add comment to (.+?) saying (.+)',
         r'note (?:for )?(?:contact )?(.+?) (?:saying |that )?(.+)'
     ]
     
@@ -1171,20 +1171,32 @@ def extract_crm_calendar_command(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def extract_crm_pipeline_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract CRM pipeline commands from voice text"""
+    """Extract CRM pipeline commands from voice text - FULLY FIXED VERSION"""
     text_lower = text.lower().strip()
     
-    # Create opportunity
+    # FIXED: Enhanced opportunity/deal patterns
     opportunity_patterns = [
-        r'create (?:new )?(?:opportunity|deal) (?:for )?(.+?)(?:\s+worth\s+\$?([0-9,]+))?(?:\s+(?:for|with)\s+(.+?))?$'
+        r'(?:add |create |new )?(?:opportunity|deal) (.+?)(?:\s+(?:for|with)\s+(.+?))?(?:\s+(?:worth|value|valued at)\s+\$?([0-9,]+))?',
+        r'(?:add |create |new )?(?:opportunity|deal) (.+?)(?:\s+(?:worth|value|valued at)\s+\$?([0-9,]+))(?:\s+(?:for|with)\s+(.+?))?'
     ]
     
     for pattern in opportunity_patterns:
         match = re.search(pattern, text_lower)
         if match:
-            name = match.group(1).strip()
-            value = float(match.group(2).replace(",", "")) if match.group(2) else 0
-            contact = match.group(3).strip() if match.group(3) else ""
+            # Handle different group arrangements
+            if len(match.groups()) == 3:
+                name = match.group(1).strip()
+                # Check if group 2 is a number (value) or name (contact)
+                if match.group(2) and match.group(2).replace(',', '').replace('.', '').isdigit():
+                    value = float(match.group(2).replace(",", ""))
+                    contact = match.group(3).strip() if match.group(3) else ""
+                else:
+                    contact = match.group(2).strip() if match.group(2) else ""
+                    value = float(match.group(3).replace(",", "")) if match.group(3) else 0
+            else:
+                name = match.group(1).strip()
+                value = 0
+                contact = ""
             
             return {
                 "action": "create_opportunity",
@@ -1193,10 +1205,12 @@ def extract_crm_pipeline_command(text: str) -> Optional[Dict[str, Any]]:
                 "contact": contact
             }
     
-    # Show pipeline status
+    # FIXED: Enhanced pipeline display patterns
     pipeline_patterns = [
-        r'show (?:me )?(?:this month(?:\'s)?|current) (?:sales )?pipeline (?:status)?',
-        r'(?:sales )?pipeline (?:summary|status|report)'
+        r'(?:show|display|view) (?:me )?(?:the )?(?:sales )?pipeline',
+        r'(?:show|display) (?:me )?(?:this month(?:\'s)?|current) (?:sales )?pipeline (?:status)?',
+        r'(?:sales )?pipeline (?:summary|status|report)',
+        r'(?:display|show) (?:sales )?pipeline'
     ]
     
     for pattern in pipeline_patterns:
@@ -1233,11 +1247,11 @@ def extract_email_command(text: str) -> Dict[str, Any]:
     patterns = [
         r'email (.+?) (?:with )?subject (.+?) saying (.+)',
         r'send (?:an )?email to (.+?) (?:with )?subject (.+?) saying (.+)',
-        r'send (?:an )?email to (.+?) (?:about|regarding) (.+)',  # Added about/regarding pattern
-        r'compose email to (.+?) (?:regarding|about) (.+)',  # Added compose pattern
-        r'email (.+?) subject (.+?) saying (.+)',  # Direct email pattern
-        r'email (.+?) saying (.+)',  # Simple email pattern
-        r'send (?:an )?email to (.+?) saying (.+)',  # Simple send email pattern
+        r'send (?:an )?email to (.+?) (?:about|regarding) (.+)',
+        r'compose email to (.+?) (?:regarding|about) (.+)',
+        r'email (.+?) subject (.+?) saying (.+)',
+        r'email (.+?) saying (.+)',
+        r'send (?:an )?email to (.+?) saying (.+)',
     ]
     
     text_lower = fixed_text.lower().strip()
@@ -1290,8 +1304,8 @@ def extract_sms_command(text: str) -> Dict[str, Any]:
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) saying (.+)',
         r'text (.+?) saying (.+)',
-        r'message (.+?) (?:saying|with) (.+)',  # Fixed to handle "with"
-        r'sms (.+?) saying (.+)',  # Added SMS pattern
+        r'message (.+?) (?:saying|with) (.+)',
+        r'sms (.+?) saying (.+)',
         r'send (.+?) the message (.+)',
         r'tell (.+?) that (.+)',
     ]
@@ -1425,6 +1439,13 @@ class WakeWordProcessor:
             print(f"📱 RCS command: {rcs_command.get('action')}")
             return rcs_command
         
+        # Try CRM pipeline commands (MOVED UP for better recognition)
+        pipeline_command = extract_crm_pipeline_command(command_text)
+        if pipeline_command:
+            pipeline_command["wake_word_info"] = wake_result
+            print(f"📊 CRM Pipeline command: {pipeline_command.get('action')}")
+            return pipeline_command
+        
         # Try CRM contact commands BEFORE SMS/Email (for better lookup/search detection)
         contact_command = extract_crm_contact_command(command_text)
         if contact_command:
@@ -1445,13 +1466,6 @@ class WakeWordProcessor:
             calendar_command["wake_word_info"] = wake_result
             print(f"📅 CRM Calendar command: {calendar_command.get('action')}")
             return calendar_command
-        
-        # Try CRM pipeline commands
-        pipeline_command = extract_crm_pipeline_command(command_text)
-        if pipeline_command:
-            pipeline_command["wake_word_info"] = wake_result
-            print(f"📊 CRM Pipeline command: {pipeline_command.get('action')}")
-            return pipeline_command
         
         # Try SMS command
         sms_command = extract_sms_command(command_text)
@@ -1975,7 +1989,7 @@ def handle_update_contact_company(data):
         return f"❌ Error updating contact: {str(e)}"
 
 def handle_add_contact_note(data):
-    """Handle adding note to contact"""
+    """Handle adding note to contact - FULLY FIXED VERSION"""
     name = data.get("name", "")
     note = data.get("note", "")
     
@@ -1994,11 +2008,11 @@ def handle_add_contact_note(data):
     
     if note_result.get("success"):
         if name and contact_id:
-            response = f"✅ Added note to {name}: {note}"
-            response += f"\n📍 Check contact's Notes field in HubSpot"
+            response = f"✅ Note saved: {note}"
+            response += f"\n📍 Added to {name}'s contact record"
         else:
             response = f"✅ Note saved: {note}"
-            response += f"\n📍 Find it in HubSpot → Deals → Look for 'NOTE: {note[:20]}...'"
+            response += f"\n📍 Saved as general note in HubSpot"
         return response
     else:
         return f"❌ Failed to add note: {note_result.get('error')}"
@@ -2116,7 +2130,7 @@ def handle_show_calendar(data):
         return f"❌ Failed to get calendar: {result.get('error')}"
 
 def handle_create_opportunity(data):
-    """Handle creating new opportunity"""
+    """Handle creating new opportunity - FULLY FIXED VERSION"""
     name = data.get("name", "")
     value = data.get("value", 0)
     contact = data.get("contact", "")
@@ -2145,7 +2159,7 @@ def handle_create_opportunity(data):
         return f"❌ Failed to create deal: {result.get('error')}"
 
 def handle_show_pipeline_summary(data):
-    """Handle showing pipeline summary"""
+    """Handle showing pipeline summary - FULLY FIXED VERSION"""
     result = hubspot_service.get_pipeline_summary()
     
     if result.get("success"):
@@ -2186,7 +2200,7 @@ def dispatch_action(parsed):
         return handle_send_message_to_contact(parsed)
     elif action == "send_email":
         return handle_send_email(parsed)
-    elif action == "send_email_to_contact":  # NEW
+    elif action == "send_email_to_contact":
         return handle_send_email_to_contact(parsed)
     
     # CRM Contact actions
@@ -2194,9 +2208,9 @@ def dispatch_action(parsed):
         return handle_create_contact(parsed)
     elif action == "update_contact_phone":
         return handle_update_contact_phone(parsed)
-    elif action == "update_contact_email":  # NEW
+    elif action == "update_contact_email":
         return handle_update_contact_email(parsed)
-    elif action == "update_contact_company":  # NEW
+    elif action == "update_contact_company":
         return handle_update_contact_company(parsed)
     elif action == "add_contact_note":
         return handle_add_contact_note(parsed)

@@ -1,5 +1,5 @@
 # Enhanced Flask Wake Word App - SMS, Email, CRM & RCS with HubSpot Integration
-# Complete CRMAutoPilot with Twilio RCS Support - FULLY FIXED VERSION
+# Complete CRMAutoPilot with Twilio RCS Support - FIXED VERSION
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -146,12 +146,26 @@ class HubSpotService:
     def search_contact(self, query: str) -> Dict[str, Any]:
         """Search for contacts by name, email, or phone"""
         try:
-            # Use the search API with query parameter for general search
-            search_data = {
-                "query": query,
-                "properties": ["email", "firstname", "lastname", "phone", "company"],
-                "limit": 10
-            }
+            # First try searching by email if query looks like email
+            if "@" in query:
+                search_data = {
+                    "filterGroups": [{
+                        "filters": [{
+                            "propertyName": "email",
+                            "operator": "EQ",
+                            "value": query
+                        }]
+                    }],
+                    "properties": ["email", "firstname", "lastname", "phone", "company"],
+                    "limit": 10
+                }
+            else:
+                # Use general text search for names
+                search_data = {
+                    "query": query,
+                    "properties": ["email", "firstname", "lastname", "phone", "company"],
+                    "limit": 10
+                }
             
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/contacts/search",
@@ -209,7 +223,7 @@ class HubSpotService:
                 # If no specific contact, create a general note as a deal
                 note_deal = {
                     "properties": {
-                        "dealname": f"NOTE: {note[:50]}...",
+                        "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
                         "dealstage": "appointmentscheduled",
                         "pipeline": "default", 
                         "amount": "0",
@@ -379,7 +393,7 @@ class HubSpotService:
                             {
                                 "propertyName": "dealname",
                                 "operator": "CONTAINS_TOKEN",
-                                "value": "MEETING:"
+                                "value": "MEETING"
                             }
                         ]
                     },
@@ -388,7 +402,7 @@ class HubSpotService:
                             {
                                 "propertyName": "dealname", 
                                 "operator": "CONTAINS_TOKEN",
-                                "value": "TASK:"
+                                "value": "TASK"
                             }
                         ]
                     }
@@ -552,7 +566,7 @@ class HubSpotService:
                     "filters": [{
                         "propertyName": "dealname",
                         "operator": "CONTAINS_TOKEN",
-                        "value": contact_name.split()[0]  # Use first name for search
+                        "value": contact_name.split()[0] if contact_name.split() else contact_name  # Use first name for search
                     }]
                 }],
                 "properties": ["dealname", "amount", "dealstage", "closedate"],
@@ -665,48 +679,17 @@ class EnhancedTwilioClient:
                 "body": message
             }
             
-            # Add RCS-specific content
-            rcs_content = {}
-            
             # Add media if provided
             if media_url:
                 message_data["media_url"] = [media_url]
             
-            # Add quick reply suggestions (RCS feature)
+            # For RCS features, we'll use the body text with clear formatting
+            # since Twilio RCS API may have different implementation
             if quick_replies:
-                rcs_content["actions"] = []
-                for reply_text in quick_replies[:11]:  # RCS supports up to 11 suggestions
-                    rcs_content["actions"].append({
-                        "type": "reply",
-                        "text": reply_text,
-                        "postbackData": reply_text
-                    })
-            
-            # Add rich card if provided
-            if card_data:
-                rcs_content["cards"] = [{
-                    "title": card_data.get("title", ""),
-                    "subtitle": card_data.get("subtitle", ""),
-                    "media": {
-                        "url": card_data.get("image_url", ""),
-                        "height": "MEDIUM"
-                    },
-                    "buttons": []
-                }]
-                
-                # Add card buttons
-                if card_data.get("buttons"):
-                    for button in card_data["buttons"][:4]:  # Max 4 buttons per card
-                        rcs_content["cards"][0]["buttons"].append({
-                            "type": button.get("type", "url"),
-                            "text": button.get("text", ""),
-                            "url": button.get("url", ""),
-                            "postbackData": button.get("postback", "")
-                        })
-            
-            # Add RCS content to message if any rich features are present
-            if rcs_content:
-                message_data["persistent_action"] = json.dumps(rcs_content)
+                message += "\n\n📱 Quick Replies:\n"
+                for i, reply in enumerate(quick_replies[:11], 1):
+                    message += f"{i}. {reply}\n"
+                message_data["body"] = message
             
             # Send the RCS message
             message_response = self.client.messages.create(**message_data)
@@ -719,7 +702,7 @@ class EnhancedTwilioClient:
                 "from": self.messaging_service_sid,
                 "body": message,
                 "message_type": "RCS",
-                "rich_content": rcs_content if rcs_content else None
+                "rich_content": {"quick_replies": quick_replies} if quick_replies else None
             }
             
         except Exception as e:
@@ -785,31 +768,13 @@ class EnhancedTwilioClient:
         rcs_options = {}
         
         if notification_type == "meeting_reminder":
-            rcs_options["card_data"] = {
-                "title": "Meeting Reminder",
-                "subtitle": message,
-                "image_url": "https://example.com/meeting-icon.png",
-                "buttons": [
-                    {"type": "url", "text": "Join Meeting", "url": "https://meet.example.com"},
-                    {"type": "reply", "text": "Reschedule", "postback": "RESCHEDULE_MEETING"},
-                    {"type": "reply", "text": "Cancel", "postback": "CANCEL_MEETING"}
-                ]
-            }
             rcs_options["quick_replies"] = ["Confirm", "Reschedule", "Cancel"]
             
         elif notification_type == "task_update":
             rcs_options["quick_replies"] = ["Mark Complete", "Postpone", "View Details"]
             
         elif notification_type == "deal_update":
-            rcs_options["card_data"] = {
-                "title": "Deal Update",
-                "subtitle": message,
-                "buttons": [
-                    {"type": "url", "text": "View in CRM", "url": "https://app.hubspot.com"},
-                    {"type": "reply", "text": "Approve", "postback": "APPROVE_DEAL"},
-                    {"type": "reply", "text": "Request Info", "postback": "REQUEST_INFO"}
-                ]
-            }
+            rcs_options["quick_replies"] = ["Approve", "Request Info", "View in CRM"]
             
         elif notification_type == "contact_followup":
             rcs_options["quick_replies"] = [
@@ -835,33 +800,18 @@ class EnhancedTwilioClient:
             return self.send_sms(to, sms_menu)
         
         try:
-            # Build RCS carousel
-            carousel_cards = []
-            for option in options[:10]:  # RCS supports up to 10 cards in carousel
-                card = {
-                    "title": option.get("title", ""),
-                    "subtitle": option.get("description", ""),
-                    "media": {
-                        "url": option.get("image_url", "https://via.placeholder.com/300x200"),
-                        "height": "MEDIUM"
-                    },
-                    "buttons": [{
-                        "type": "reply",
-                        "text": option.get("action_text", "Select"),
-                        "postbackData": option.get("action_id", "")
-                    }]
-                }
-                carousel_cards.append(card)
+            # Build menu message with options
+            menu_message = f"{menu_title}\n\n"
+            for i, option in enumerate(options[:10], 1):
+                menu_message += f"{i}. {option.get('title', '')}"
+                if option.get('description'):
+                    menu_message += f" - {option.get('description')}"
+                menu_message += "\n"
             
             message_data = {
                 "messaging_service_sid": self.messaging_service_sid,
                 "to": to,
-                "body": menu_title,
-                "persistent_action": json.dumps({
-                    "carousel": {
-                        "cards": carousel_cards
-                    }
-                })
+                "body": menu_message
             }
             
             message_response = self.client.messages.create(**message_data)
@@ -871,13 +821,13 @@ class EnhancedTwilioClient:
                 "message_sid": message_response.sid,
                 "status": message_response.status,
                 "to": to,
-                "message_type": "RCS_CAROUSEL",
-                "carousel_items": len(carousel_cards)
+                "message_type": "RCS_MENU",
+                "menu_items": len(options)
             }
             
         except Exception as e:
             # Fallback to SMS
-            print(f"RCS carousel failed, falling back to SMS: {e}")
+            print(f"RCS menu failed, falling back to SMS: {e}")
             sms_menu = f"{menu_title}\n"
             for i, option in enumerate(options, 1):
                 sms_menu += f"{i}. {option.get('title', '')}\n"
@@ -1311,7 +1261,7 @@ def fix_email_addresses(text: str) -> str:
     
     return fixed_text
 
-def extract_email_command(text: str) -> Dict[str, Any]:
+def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
     """Extract email command from text - FULLY FIXED VERSION"""
     original_text = text
     fixed_text = fix_email_addresses(text)
@@ -1393,7 +1343,7 @@ def extract_email_command(text: str) -> Dict[str, Any]:
     
     return None
 
-def extract_sms_command(text: str) -> Dict[str, Any]:
+def extract_sms_command(text: str) -> Optional[Dict[str, Any]]:
     """Extract SMS command from text - FULLY FIXED VERSION"""
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) (?:saying|about) (.+)',
@@ -1477,7 +1427,7 @@ def format_phone_number(phone: str) -> str:
     
     return clean
 
-def handle_special_commands(text: str) -> Dict[str, Any]:
+def handle_special_commands(text: str) -> Optional[Dict[str, Any]]:
     """Handle unsupported or special edge case commands"""
     text_lower = text.lower().strip()
     
@@ -1687,368 +1637,392 @@ Response structure examples:
 
 def handle_send_rcs_message(data):
     """Handle sending RCS message with rich content"""
-    recipient = data.get("recipient", "")
-    message = data.get("message", "")
-    image_url = data.get("image_url", "")
-    
-    if is_phone_number(recipient):
-        formatted_phone = format_phone_number(recipient)
-        if not formatted_phone:
-            return f"❌ Invalid phone number format: {recipient}"
+    try:
+        recipient = data.get("recipient", "")
+        message = data.get("message", "")
+        image_url = data.get("image_url", "")
         
-        # Prepare RCS options
-        rcs_options = {}
-        if image_url:
-            rcs_options["media_url"] = image_url
-        
-        # Add default quick replies for business messages
-        rcs_options["quick_replies"] = ["Reply", "Call Back", "Schedule Meeting"]
-        
-        result = enhanced_twilio_client.send_smart_message(
-            formatted_phone, 
-            message, 
-            **rcs_options
-        )
-        
-        if result.get("success"):
-            message_type = result.get("message_type", "Unknown")
-            response = f"✅ {message_type} sent to {recipient}!\n\n"
-            response += f"Message: {message}\n"
+        if is_phone_number(recipient):
+            formatted_phone = format_phone_number(recipient)
+            if not formatted_phone:
+                return f"❌ Invalid phone number format: {recipient}"
+            
+            # Prepare RCS options
+            rcs_options = {}
             if image_url:
-                response += f"Image: {image_url}\n"
-            response += f"Message ID: {result.get('message_sid', 'N/A')}"
-            return response
+                rcs_options["media_url"] = image_url
+            
+            # Add default quick replies for business messages
+            rcs_options["quick_replies"] = ["Reply", "Call Back", "Schedule Meeting"]
+            
+            result = enhanced_twilio_client.send_smart_message(
+                formatted_phone, 
+                message, 
+                **rcs_options
+            )
+            
+            if result.get("success"):
+                message_type = result.get("message_type", "Unknown")
+                response = f"✅ {message_type} sent to {recipient}!\n\n"
+                response += f"Message: {message}\n"
+                if image_url:
+                    response += f"Image: {image_url}\n"
+                response += f"Message ID: {result.get('message_sid', 'N/A')}"
+                return response
+            else:
+                return f"❌ Failed to send message: {result.get('error')}"
         else:
-            return f"❌ Failed to send message: {result.get('error')}"
-    else:
-        # Try to lookup contact by name
-        search_result = hubspot_service.search_contact(recipient)
-        if search_result.get("success") and search_result.get("contacts"):
-            contact = search_result.get("contacts")[0]
-            contact_props = contact.get("properties", {})
-            phone = contact_props.get("phone", "")
-            if phone:
-                formatted_phone = format_phone_number(phone)
-                if formatted_phone:
-                    result = enhanced_twilio_client.send_smart_message(formatted_phone, message)
-                    if result.get("success"):
-                        return f"✅ Message sent to {recipient} ({phone})!"
-            return f"❌ No valid phone number found for {recipient}"
-        return f"❌ Could not find contact: {recipient}"
+            # Try to lookup contact by name
+            search_result = hubspot_service.search_contact(recipient)
+            if search_result.get("success") and search_result.get("contacts"):
+                contact = search_result.get("contacts")[0]
+                contact_props = contact.get("properties", {})
+                phone = contact_props.get("phone", "")
+                if phone:
+                    formatted_phone = format_phone_number(phone)
+                    if formatted_phone:
+                        result = enhanced_twilio_client.send_smart_message(formatted_phone, message)
+                        if result.get("success"):
+                            return f"✅ Message sent to {recipient} ({phone})!"
+                return f"❌ No valid phone number found for {recipient}"
+            return f"❌ Could not find contact: {recipient}"
+    except Exception as e:
+        return f"❌ Error sending RCS message: {str(e)}"
 
 def handle_send_interactive_menu(data):
     """Handle sending interactive RCS menu"""
-    recipient = data.get("recipient", "")
-    menu_type = data.get("menu_type", "").lower()
-    
-    if not is_phone_number(recipient):
-        # Try to lookup contact
-        search_result = hubspot_service.search_contact(recipient)
-        if search_result.get("success") and search_result.get("contacts"):
-            contact = search_result.get("contacts")[0]
-            contact_props = contact.get("properties", {})
-            phone = contact_props.get("phone", "")
-            if phone:
-                recipient = phone
+    try:
+        recipient = data.get("recipient", "")
+        menu_type = data.get("menu_type", "").lower()
+        
+        if not is_phone_number(recipient):
+            # Try to lookup contact
+            search_result = hubspot_service.search_contact(recipient)
+            if search_result.get("success") and search_result.get("contacts"):
+                contact = search_result.get("contacts")[0]
+                contact_props = contact.get("properties", {})
+                phone = contact_props.get("phone", "")
+                if phone:
+                    recipient = phone
+                else:
+                    return f"❌ No phone number found for {recipient}"
             else:
-                return f"❌ No phone number found for {recipient}"
-        else:
-            return f"❌ Could not find contact: {recipient}"
-    
-    formatted_phone = format_phone_number(recipient)
-    if not formatted_phone:
-        return f"❌ Invalid phone number format: {recipient}"
-    
-    # Define menu options based on type
-    menu_options = []
-    menu_title = ""
-    
-    if "product" in menu_type or "service" in menu_type:
-        menu_title = "Our Services"
-        menu_options = [
-            {
-                "title": "CRM Integration",
-                "description": "Complete HubSpot setup and automation",
-                "action_text": "Learn More",
-                "action_id": "SERVICE_CRM",
-                "image_url": "https://example.com/crm-icon.png"
-            },
-            {
-                "title": "Voice Automation",
-                "description": "AI-powered voice command system",
-                "action_text": "Get Demo",
-                "action_id": "SERVICE_VOICE",
-                "image_url": "https://example.com/voice-icon.png"
-            },
-            {
-                "title": "SMS Marketing",
-                "description": "Automated SMS campaigns with RCS",
-                "action_text": "View Pricing",
-                "action_id": "SERVICE_SMS",
-                "image_url": "https://example.com/sms-icon.png"
-            }
-        ]
-    elif "appointment" in menu_type or "schedule" in menu_type:
-        menu_title = "Schedule Appointment"
-        menu_options = [
-            {
-                "title": "Tomorrow Morning",
-                "description": "9:00 AM - 12:00 PM",
-                "action_text": "Book",
-                "action_id": "APPT_TOMORROW_AM"
-            },
-            {
-                "title": "Tomorrow Afternoon",
-                "description": "2:00 PM - 5:00 PM",
-                "action_text": "Book",
-                "action_id": "APPT_TOMORROW_PM"
-            },
-            {
-                "title": "Next Week",
-                "description": "Choose a day next week",
-                "action_text": "Select",
-                "action_id": "APPT_NEXT_WEEK"
-            }
-        ]
-    else:
-        menu_title = "Quick Actions"
-        menu_options = [
-            {
-                "title": "Contact Support",
-                "description": "Get help from our team",
-                "action_text": "Contact",
-                "action_id": "ACTION_SUPPORT"
-            },
-            {
-                "title": "View Account",
-                "description": "Check your account details",
-                "action_text": "View",
-                "action_id": "ACTION_ACCOUNT"
-            }
-        ]
-    
-    result = enhanced_twilio_client.send_interactive_menu(
-        formatted_phone,
-        menu_title,
-        menu_options
-    )
-    
-    if result.get("success"):
-        message_type = result.get("message_type", "menu")
-        if message_type == "RCS_CAROUSEL":
-            return f"✅ Interactive RCS menu sent to {recipient}!\n\nMenu: {menu_title}\nItems: {result.get('carousel_items', 0)}"
-        else:
-            return f"✅ Menu sent as SMS to {recipient} (RCS not available)"
-    else:
-        return f"❌ Failed to send menu: {result.get('error')}"
-
-def handle_send_crm_notification(data):
-    """Handle sending CRM notification with RCS"""
-    recipient = data.get("recipient", "")
-    message = data.get("message", "")
-    notification_type = data.get("notification_type", "general")
-    
-    # If recipient is a name, lookup contact
-    contact_data = {"phone": recipient, "name": "Customer"}
-    
-    if not is_phone_number(recipient):
-        # Try to find contact by name
-        search_result = hubspot_service.search_contact(recipient)
-        if search_result.get("success") and search_result.get("contacts"):
-            contact = search_result.get("contacts")[0]
-            contact_props = contact.get("properties", {})
-            phone = contact_props.get("phone", "")
-            if phone:
-                contact_data = {
-                    "phone": phone,
-                    "name": f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
-                }
-            else:
-                return f"❌ No phone number found for {recipient}"
-        else:
-            return f"❌ Contact not found: {recipient}"
-    
-    result = enhanced_twilio_client.send_crm_notification(
-        contact_data,
-        message,
-        notification_type
-    )
-    
-    if result.get("success"):
-        return f"✅ {notification_type.replace('_', ' ').title()} sent to {contact_data.get('name')}!\n\nMessage: {message}"
-    else:
-        return f"❌ Failed to send notification: {result.get('error')}"
-
-def handle_send_message(data):
-    """Handle SMS sending - now with RCS upgrade"""
-    recipient = data.get("recipient", "")
-    message = data.get("message", "")
-    
-    if is_phone_number(recipient):
+                return f"❌ Could not find contact: {recipient}"
+        
         formatted_phone = format_phone_number(recipient)
         if not formatted_phone:
             return f"❌ Invalid phone number format: {recipient}"
         
-        # Use smart message (RCS when available, SMS fallback)
+        # Define menu options based on type
+        menu_options = []
+        menu_title = ""
+        
+        if "product" in menu_type or "service" in menu_type:
+            menu_title = "Our Services"
+            menu_options = [
+                {
+                    "title": "CRM Integration",
+                    "description": "Complete HubSpot setup and automation",
+                    "action_text": "Learn More",
+                    "action_id": "SERVICE_CRM",
+                    "image_url": "https://example.com/crm-icon.png"
+                },
+                {
+                    "title": "Voice Automation",
+                    "description": "AI-powered voice command system",
+                    "action_text": "Get Demo",
+                    "action_id": "SERVICE_VOICE",
+                    "image_url": "https://example.com/voice-icon.png"
+                },
+                {
+                    "title": "SMS Marketing",
+                    "description": "Automated SMS campaigns with RCS",
+                    "action_text": "View Pricing",
+                    "action_id": "SERVICE_SMS",
+                    "image_url": "https://example.com/sms-icon.png"
+                }
+            ]
+        elif "appointment" in menu_type or "schedule" in menu_type:
+            menu_title = "Schedule Appointment"
+            menu_options = [
+                {
+                    "title": "Tomorrow Morning",
+                    "description": "9:00 AM - 12:00 PM",
+                    "action_text": "Book",
+                    "action_id": "APPT_TOMORROW_AM"
+                },
+                {
+                    "title": "Tomorrow Afternoon",
+                    "description": "2:00 PM - 5:00 PM",
+                    "action_text": "Book",
+                    "action_id": "APPT_TOMORROW_PM"
+                },
+                {
+                    "title": "Next Week",
+                    "description": "Choose a day next week",
+                    "action_text": "Select",
+                    "action_id": "APPT_NEXT_WEEK"
+                }
+            ]
+        else:
+            menu_title = "Quick Actions"
+            menu_options = [
+                {
+                    "title": "Contact Support",
+                    "description": "Get help from our team",
+                    "action_text": "Contact",
+                    "action_id": "ACTION_SUPPORT"
+                },
+                {
+                    "title": "View Account",
+                    "description": "Check your account details",
+                    "action_text": "View",
+                    "action_id": "ACTION_ACCOUNT"
+                }
+            ]
+        
+        result = enhanced_twilio_client.send_interactive_menu(
+            formatted_phone,
+            menu_title,
+            menu_options
+        )
+        
+        if result.get("success"):
+            message_type = result.get("message_type", "menu")
+            if message_type == "RCS_MENU":
+                return f"✅ Interactive RCS menu sent to {recipient}!\n\nMenu: {menu_title}\nItems: {result.get('menu_items', 0)}"
+            else:
+                return f"✅ Menu sent as SMS to {recipient} (RCS not available)"
+        else:
+            return f"❌ Failed to send menu: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error sending menu: {str(e)}"
+
+def handle_send_crm_notification(data):
+    """Handle sending CRM notification with RCS"""
+    try:
+        recipient = data.get("recipient", "")
+        message = data.get("message", "")
+        notification_type = data.get("notification_type", "general")
+        
+        # If recipient is a name, lookup contact
+        contact_data = {"phone": recipient, "name": "Customer"}
+        
+        if not is_phone_number(recipient):
+            # Try to find contact by name
+            search_result = hubspot_service.search_contact(recipient)
+            if search_result.get("success") and search_result.get("contacts"):
+                contact = search_result.get("contacts")[0]
+                contact_props = contact.get("properties", {})
+                phone = contact_props.get("phone", "")
+                if phone:
+                    contact_data = {
+                        "phone": phone,
+                        "name": f"{contact_props.get('firstname', '')} {contact_props.get('lastname', '')}".strip()
+                    }
+                else:
+                    return f"❌ No phone number found for {recipient}"
+            else:
+                return f"❌ Contact not found: {recipient}"
+        
+        result = enhanced_twilio_client.send_crm_notification(
+            contact_data,
+            message,
+            notification_type
+        )
+        
+        if result.get("success"):
+            return f"✅ {notification_type.replace('_', ' ').title()} sent to {contact_data.get('name')}!\n\nMessage: {message}"
+        else:
+            return f"❌ Failed to send notification: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error sending notification: {str(e)}"
+
+def handle_send_message(data):
+    """Handle SMS sending - now with RCS upgrade"""
+    try:
+        recipient = data.get("recipient", "")
+        message = data.get("message", "")
+        
+        if is_phone_number(recipient):
+            formatted_phone = format_phone_number(recipient)
+            if not formatted_phone:
+                return f"❌ Invalid phone number format: {recipient}"
+            
+            # Use smart message (RCS when available, SMS fallback)
+            result = enhanced_twilio_client.send_smart_message(formatted_phone, message)
+            
+            if result.get("success"):
+                msg_type = result.get("message_type", "Message")
+                return f"✅ {msg_type} sent to {recipient}!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
+            else:
+                return f"❌ Failed to send message: {result.get('error')}"
+        else:
+            return f"❌ Invalid phone number: {recipient}"
+    except Exception as e:
+        return f"❌ Error sending message: {str(e)}"
+
+def handle_send_message_to_contact(data):
+    """Handle SMS sending to contact name"""
+    try:
+        contact_name = data.get("contact_name", "")
+        message = data.get("message", "")
+        
+        if not contact_name:
+            return "❌ Contact name is required"
+        
+        # Search for contact to get phone number
+        search_result = hubspot_service.search_contact(contact_name)
+        
+        if not search_result.get("success"):
+            return f"❌ Could not find contact: {contact_name}. Please create the contact first or use their phone number directly."
+        
+        contacts = search_result.get("contacts", [])
+        if not contacts:
+            return f"❌ No contact found with name: {contact_name}. Try using their phone number directly."
+        
+        # Get phone number from contact
+        contact = contacts[0]
+        contact_props = contact.get("properties", {})
+        phone = contact_props.get("phone", "")
+        
+        if not phone:
+            return f"❌ No phone number found for {contact_name}. Please update their contact with a phone number."
+        
+        # Send message using smart messaging (RCS/SMS)
+        formatted_phone = format_phone_number(phone)
+        if not formatted_phone:
+            return f"❌ Invalid phone number format for {contact_name}: {phone}"
+        
         result = enhanced_twilio_client.send_smart_message(formatted_phone, message)
         
         if result.get("success"):
             msg_type = result.get("message_type", "Message")
-            return f"✅ {msg_type} sent to {recipient}!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
+            return f"✅ {msg_type} sent to {contact_name} ({phone})!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
         else:
-            return f"❌ Failed to send message: {result.get('error')}"
-    else:
-        return f"❌ Invalid phone number: {recipient}"
-
-def handle_send_message_to_contact(data):
-    """Handle SMS sending to contact name"""
-    contact_name = data.get("contact_name", "")
-    message = data.get("message", "")
-    
-    if not contact_name:
-        return "❌ Contact name is required"
-    
-    # Search for contact to get phone number
-    search_result = hubspot_service.search_contact(contact_name)
-    
-    if not search_result.get("success"):
-        return f"❌ Could not find contact: {contact_name}. Please create the contact first or use their phone number directly."
-    
-    contacts = search_result.get("contacts", [])
-    if not contacts:
-        return f"❌ No contact found with name: {contact_name}. Try using their phone number directly."
-    
-    # Get phone number from contact
-    contact = contacts[0]
-    contact_props = contact.get("properties", {})
-    phone = contact_props.get("phone", "")
-    
-    if not phone:
-        return f"❌ No phone number found for {contact_name}. Please update their contact with a phone number."
-    
-    # Send message using smart messaging (RCS/SMS)
-    formatted_phone = format_phone_number(phone)
-    if not formatted_phone:
-        return f"❌ Invalid phone number format for {contact_name}: {phone}"
-    
-    result = enhanced_twilio_client.send_smart_message(formatted_phone, message)
-    
-    if result.get("success"):
-        msg_type = result.get("message_type", "Message")
-        return f"✅ {msg_type} sent to {contact_name} ({phone})!\n\nMessage: {message}\n\nMessage ID: {result.get('message_sid', 'N/A')}"
-    else:
-        return f"❌ Failed to send message to {contact_name} ({phone}): {result.get('error')}"
+            return f"❌ Failed to send message to {contact_name} ({phone}): {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error sending message: {str(e)}"
 
 def handle_send_email(data):
     """Handle email sending"""
-    recipient = data.get("recipient", "")
-    subject = data.get("subject", "Voice Command Message")
-    message = data.get("message", "")
-    
-    if is_email_address(recipient):
-        result = email_client.send_email(recipient, subject, message)
+    try:
+        recipient = data.get("recipient", "")
+        subject = data.get("subject", "Voice Command Message")
+        message = data.get("message", "")
         
-        if result.get("success"):
-            return f"✅ Email sent to {recipient}!\n\nSubject: {subject}\nMessage: {message}"
+        if is_email_address(recipient):
+            result = email_client.send_email(recipient, subject, message)
+            
+            if result.get("success"):
+                return f"✅ Email sent to {recipient}!\n\nSubject: {subject}\nMessage: {message}"
+            else:
+                return f"❌ Failed to send email to {recipient}: {result.get('error')}"
         else:
-            return f"❌ Failed to send email to {recipient}: {result.get('error')}"
-    else:
-        return f"❌ Invalid email address: {recipient}"
+            return f"❌ Invalid email address: {recipient}"
+    except Exception as e:
+        return f"❌ Error sending email: {str(e)}"
 
 def handle_send_email_to_contact(data):
     """Handle email sending to contact name with fallback"""
-    contact_name = data.get("contact_name", "")
-    subject = data.get("subject", "Voice Command Message")
-    message = data.get("message", "")
-    fallback_email = data.get("fallback_email", "")
-    
-    if not contact_name:
-        return "❌ Contact name is required"
-    
-    # Search for contact to get email address
-    search_result = hubspot_service.search_contact(contact_name)
-    
-    if not search_result.get("success") or not search_result.get("contacts"):
-        # Use fallback email if available
-        if fallback_email:
-            result = email_client.send_email(fallback_email, subject, message)
-            if result.get("success"):
-                return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
-            else:
-                return f"❌ Failed to send email: {result.get('error')}"
-        return f"❌ Could not find contact: {contact_name}. Please create the contact first."
-    
-    contacts = search_result.get("contacts", [])
-    if not contacts:
-        # Use fallback email if available
-        if fallback_email:
-            result = email_client.send_email(fallback_email, subject, message)
-            if result.get("success"):
-                return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
-        return f"❌ No contact found with name: {contact_name}"
-    
-    # Get email from contact
-    contact = contacts[0]
-    contact_props = contact.get("properties", {})
-    email = contact_props.get("email", "")
-    
-    if not email:
-        # Use fallback email if available
-        if fallback_email:
-            result = email_client.send_email(fallback_email, subject, message)
-            if result.get("success"):
-                return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
-            else:
-                return f"❌ Failed to send email: {result.get('error')}"
-        return f"❌ No email address found for {contact_name}. Please update their contact with an email."
-    
-    # Send email
-    result = email_client.send_email(email, subject, message)
-    
-    if result.get("success"):
-        return f"✅ Email sent to {contact_name} ({email})!\n\nSubject: {subject}\nMessage: {message}"
-    else:
-        return f"❌ Failed to send email to {contact_name} ({email}): {result.get('error')}"
+    try:
+        contact_name = data.get("contact_name", "")
+        subject = data.get("subject", "Voice Command Message")
+        message = data.get("message", "")
+        fallback_email = data.get("fallback_email", "")
+        
+        if not contact_name:
+            return "❌ Contact name is required"
+        
+        # Search for contact to get email address
+        search_result = hubspot_service.search_contact(contact_name)
+        
+        if not search_result.get("success") or not search_result.get("contacts"):
+            # Use fallback email if available
+            if fallback_email:
+                result = email_client.send_email(fallback_email, subject, message)
+                if result.get("success"):
+                    return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
+                else:
+                    return f"❌ Failed to send email: {result.get('error')}"
+            return f"❌ Could not find contact: {contact_name}. Please create the contact first."
+        
+        contacts = search_result.get("contacts", [])
+        if not contacts:
+            # Use fallback email if available
+            if fallback_email:
+                result = email_client.send_email(fallback_email, subject, message)
+                if result.get("success"):
+                    return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
+            return f"❌ No contact found with name: {contact_name}"
+        
+        # Get email from contact
+        contact = contacts[0]
+        contact_props = contact.get("properties", {})
+        email = contact_props.get("email", "")
+        
+        if not email:
+            # Use fallback email if available
+            if fallback_email:
+                result = email_client.send_email(fallback_email, subject, message)
+                if result.get("success"):
+                    return f"✅ Email sent to {contact_name} ({fallback_email})!\n\nSubject: {subject}\nMessage: {message}"
+                else:
+                    return f"❌ Failed to send email: {result.get('error')}"
+            return f"❌ No email address found for {contact_name}. Please update their contact with an email."
+        
+        # Send email
+        result = email_client.send_email(email, subject, message)
+        
+        if result.get("success"):
+            return f"✅ Email sent to {contact_name} ({email})!\n\nSubject: {subject}\nMessage: {message}"
+        else:
+            return f"❌ Failed to send email to {contact_name} ({email}): {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error sending email: {str(e)}"
 
 def handle_create_contact(data):
     """Handle creating new contact in HubSpot"""
-    name = data.get("name", "")
-    email = data.get("email", "")
-    phone = data.get("phone", "")
-    company = data.get("company", "")
-    
-    if not name:
-        return "❌ Contact name is required"
-    
-    # Check if contact already exists
-    search_result = hubspot_service.search_contact(name)
-    if search_result.get("success") and search_result.get("contacts"):
-        existing_contact = search_result.get("contacts")[0]
-        contact_id = existing_contact.get("id")
-        props = existing_contact.get("properties", {})
+    try:
+        name = data.get("name", "")
+        email = data.get("email", "")
+        phone = data.get("phone", "")
+        company = data.get("company", "")
         
-        response = f"ℹ️ Contact already exists: {name}"
-        if props.get("email"):
-            response += f"\n📧 Email: {props.get('email')}"
-        if props.get("phone"):
-            response += f"\n📱 Phone: {props.get('phone')}"
-        response += f"\n🆔 HubSpot ID: {contact_id}"
-        return response
-    
-    # Create new contact
-    result = hubspot_service.create_contact(name, email, phone, company)
-    
-    if result.get("success"):
-        response = f"✅ Contact created: {name}"
-        if email:
-            response += f"\n📧 Email: {email}"
-        if phone:
-            response += f"\n📱 Phone: {phone}"
-        if company:
-            response += f"\n🏢 Company: {company}"
-        return response
-    else:
-        return f"❌ Failed to create contact: {result.get('error')}"
+        if not name:
+            return "❌ Contact name is required"
+        
+        # Check if contact already exists
+        search_result = hubspot_service.search_contact(name)
+        if search_result.get("success") and search_result.get("contacts"):
+            existing_contact = search_result.get("contacts")[0]
+            contact_id = existing_contact.get("id")
+            props = existing_contact.get("properties", {})
+            
+            response = f"ℹ️ Contact already exists: {name}"
+            if props.get("email"):
+                response += f"\n📧 Email: {props.get('email')}"
+            if props.get("phone"):
+                response += f"\n📱 Phone: {props.get('phone')}"
+            response += f"\n🆔 HubSpot ID: {contact_id}"
+            return response
+        
+        # Create new contact
+        result = hubspot_service.create_contact(name, email, phone, company)
+        
+        if result.get("success"):
+            response = f"✅ Contact created: {name}"
+            if email:
+                response += f"\n📧 Email: {email}"
+            if phone:
+                response += f"\n📱 Phone: {phone}"
+            if company:
+                response += f"\n🏢 Company: {company}"
+            return response
+        else:
+            return f"❌ Failed to create contact: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error creating contact: {str(e)}"
 
 def handle_update_contact_phone(data):
     """Handle updating contact phone number"""
@@ -2184,287 +2158,314 @@ def handle_update_contact_company(data):
 
 def handle_add_contact_note(data):
     """Handle adding note to contact - FULLY FIXED VERSION"""
-    name = data.get("name", "")
-    note = data.get("note", "")
-    
-    if not note:
-        return "❌ Note text is required"
-    
-    contact_id = ""
-    if name:
-        search_result = hubspot_service.search_contact(name)
-        if search_result.get("success"):
-            contacts = search_result.get("contacts", [])
-            if contacts:
-                contact_id = contacts[0].get("id")
-    
-    note_result = hubspot_service.add_contact_note(contact_id, note)
-    
-    # ALWAYS return success message if note was saved
-    if note_result.get("success"):
-        if name and contact_id:
-            response = f"✅ Note saved"
-            response += f"\n📍 Added to {name}'s contact record"
+    try:
+        name = data.get("name", "")
+        note = data.get("note", "")
+        
+        if not note:
+            return "❌ Note text is required"
+        
+        contact_id = ""
+        if name:
+            search_result = hubspot_service.search_contact(name)
+            if search_result.get("success"):
+                contacts = search_result.get("contacts", [])
+                if contacts:
+                    contact_id = contacts[0].get("id")
+        
+        note_result = hubspot_service.add_contact_note(contact_id, note)
+        
+        # ALWAYS return success message if note was saved
+        if note_result.get("success"):
+            if name and contact_id:
+                response = f"✅ Note saved"
+                response += f"\n📍 Added to {name}'s contact record"
+            else:
+                response = f"✅ Note saved"
+                response += f"\n📍 Saved as general note in HubSpot"
+            return response
         else:
-            response = f"✅ Note saved"
-            response += f"\n📍 Saved as general note in HubSpot"
-        return response
-    else:
-        return f"❌ Failed to add note: {note_result.get('error')}"
+            return f"❌ Failed to add note: {note_result.get('error')}"
+    except Exception as e:
+        return f"❌ Error adding note: {str(e)}"
 
 def handle_search_contact(data):
     """Handle searching for contact - Enhanced version"""
-    query = data.get("query", "")
-    
-    if not query:
-        return "❌ Search query is required"
-    
-    result = hubspot_service.search_contact(query)
-    
-    if result.get("success"):
-        contacts = result.get("contacts", [])
-        if contacts:
-            response = f"✅ Found {len(contacts)} contact(s):\n\n"
-            for i, contact in enumerate(contacts[:3], 1):
-                props = contact.get('properties', {})
-                response += f"{i}. {props.get('firstname', '')} {props.get('lastname', '')}\n"
-                if props.get("email"):
-                    response += f"   📧 {props.get('email')}\n"
-                if props.get("phone"):
-                    response += f"   📱 {props.get('phone')}\n"
-                if props.get("company"):
-                    response += f"   🏢 {props.get('company')}\n"
-                response += "\n"
-            return response.strip()
+    try:
+        query = data.get("query", "")
+        
+        if not query:
+            return "❌ Search query is required"
+        
+        result = hubspot_service.search_contact(query)
+        
+        if result.get("success"):
+            contacts = result.get("contacts", [])
+            if contacts:
+                response = f"✅ Found {len(contacts)} contact(s):\n\n"
+                for i, contact in enumerate(contacts[:3], 1):
+                    props = contact.get('properties', {})
+                    response += f"{i}. {props.get('firstname', '')} {props.get('lastname', '')}\n"
+                    if props.get("email"):
+                        response += f"   📧 {props.get('email')}\n"
+                    if props.get("phone"):
+                        response += f"   📱 {props.get('phone')}\n"
+                    if props.get("company"):
+                        response += f"   🏢 {props.get('company')}\n"
+                    response += "\n"
+                return response.strip()
+            else:
+                return f"❌ No contacts found for: {query}"
         else:
-            return f"❌ No contacts found for: {query}"
-    else:
-        # Return graceful message for non-existent contacts
-        return f"ℹ️ No contact found with name '{query}'. You can create a new contact using: 'create contact {query}'"
+            # Return graceful message for non-existent contacts
+            return f"ℹ️ No contact found with name '{query}'. You can create a new contact using: 'create contact {query}'"
+    except Exception as e:
+        return f"❌ Error searching contacts: {str(e)}"
 
 def handle_create_task(data):
     """Handle creating new task"""
-    title = data.get("title", "")
-    contact = data.get("contact", "")
-    due_date = data.get("due_date", "")
-    
-    if not title:
-        return "❌ Task title is required"
-    
-    result = hubspot_service.create_task(title, "", "", due_date)
-    
-    if result.get("success"):
-        response = f"✅ Task created: {title}"
-        if contact:
-            response += f"\n👤 For: {contact}"
-        if due_date:
-            response += f"\n📅 Due: {due_date}"
-        response += f"\n📍 Find it in HubSpot → Deals → Look for 'TASK: {title}'"
-        return response
-    else:
-        return f"❌ Failed to create task: {result.get('error')}"
+    try:
+        title = data.get("title", "")
+        contact = data.get("contact", "")
+        due_date = data.get("due_date", "")
+        
+        if not title:
+            return "❌ Task title is required"
+        
+        result = hubspot_service.create_task(title, "", "", due_date)
+        
+        if result.get("success"):
+            response = f"✅ Task created: {title}"
+            if contact:
+                response += f"\n👤 For: {contact}"
+            if due_date:
+                response += f"\n📅 Due: {due_date}"
+            response += f"\n📍 Find it in HubSpot → Deals → Look for 'TASK: {title}'"
+            return response
+        else:
+            return f"❌ Failed to create task: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error creating task: {str(e)}"
 
 def handle_schedule_meeting(data):
     """Handle scheduling meetings/appointments"""
-    contact = data.get("contact", "")
-    duration = data.get("duration", 30)
-    when = data.get("when", "")
-    
-    title = f"Appointment with {contact}" if contact else "Voice Scheduled Meeting"
-    result = hubspot_service.create_appointment(title, "", when, duration)
-    
-    if result.get("success"):
-        response = f"✅ {duration}-minute meeting scheduled"
-        if contact:
-            response += f" with {contact}"
-        if when:
-            response += f"\n📅 Time: {when}"
+    try:
+        contact = data.get("contact", "")
+        duration = data.get("duration", 30)
+        when = data.get("when", "")
+        
+        title = f"Appointment with {contact}" if contact else "Voice Scheduled Meeting"
+        result = hubspot_service.create_appointment(title, "", when, duration)
+        
+        if result.get("success"):
+            response = f"✅ {duration}-minute meeting scheduled"
+            if contact:
+                response += f" with {contact}"
+            if when:
+                response += f"\n📅 Time: {when}"
+            else:
+                response += f"\n📅 Time: Default (1 hour from now)"
+            response += f"\n📍 Find it in HubSpot → Deals → Look for 'MEETING: {title}'"
+            return response
         else:
-            response += f"\n📅 Time: Default (1 hour from now)"
-        response += f"\n📍 Find it in HubSpot → Deals → Look for 'MEETING: {title}'"
-        return response
-    else:
-        return f"❌ Failed to schedule meeting: {result.get('error')}"
+            return f"❌ Failed to schedule meeting: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error scheduling meeting: {str(e)}"
 
 def handle_show_calendar(data):
     """Handle showing calendar events"""
-    when = data.get("when", "")
-    
-    if "week" in when.lower():
-        start_date = ""
-        end_date = ""
-    elif "today" in when.lower():
-        start_date = datetime.now().strftime("%Y-%m-%d")
-        end_date = start_date
-    else:
-        start_date = when
-        end_date = ""
-    
-    result = hubspot_service.get_calendar_events(start_date, end_date)
-    
-    if result.get("success"):
-        events = result.get("events", [])
-        if events:
-            response = f"✅ Calendar events for {when or 'this week'}:\n\n"
-            for i, event in enumerate(events[:5], 1):
-                props = event.get('properties', {})
-                response += f"{i}. {props.get('hs_meeting_title', 'Event')}\n"
-                if props.get("hs_meeting_start_time"):
-                    # Convert timestamp to readable date
-                    try:
-                        timestamp = int(props.get("hs_meeting_start_time")) / 1000
-                        start_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
-                        response += f"   📅 {start_time}\n"
-                    except:
-                        response += f"   📅 {props.get('hs_meeting_start_time')}\n"
-                response += "\n"
-            return response.strip()
+    try:
+        when = data.get("when", "")
+        
+        if "week" in when.lower():
+            start_date = ""
+            end_date = ""
+        elif "today" in when.lower():
+            start_date = datetime.now().strftime("%Y-%m-%d")
+            end_date = start_date
         else:
-            message = result.get("message", f"No events found for {when or 'this period'}")
-            return f"📅 {message}"
-    else:
-        return f"❌ Failed to get calendar: {result.get('error')}"
+            start_date = when
+            end_date = ""
+        
+        result = hubspot_service.get_calendar_events(start_date, end_date)
+        
+        if result.get("success"):
+            events = result.get("events", [])
+            if events:
+                response = f"✅ Calendar events for {when or 'this week'}:\n\n"
+                for i, event in enumerate(events[:5], 1):
+                    props = event.get('properties', {})
+                    response += f"{i}. {props.get('hs_meeting_title', 'Event')}\n"
+                    if props.get("hs_meeting_start_time"):
+                        # Convert timestamp to readable date
+                        try:
+                            timestamp = int(props.get("hs_meeting_start_time")) / 1000
+                            start_time = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M")
+                            response += f"   📅 {start_time}\n"
+                        except:
+                            response += f"   📅 {props.get('hs_meeting_start_time')}\n"
+                    response += "\n"
+                return response.strip()
+            else:
+                message = result.get("message", f"No events found for {when or 'this period'}")
+                return f"📅 {message}"
+        else:
+            return f"❌ Failed to get calendar: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error getting calendar: {str(e)}"
 
 def handle_create_opportunity(data):
     """Handle creating new opportunity - FULLY FIXED VERSION"""
-    name = data.get("name", "")
-    value = data.get("value", 0)
-    contact = data.get("contact", "")
-    
-    if not name:
-        return "❌ Opportunity name is required"
-    
-    contact_id = ""
-    if contact:
-        search_result = hubspot_service.search_contact(contact)
-        if search_result.get("success"):
-            contacts = search_result.get("contacts", [])
-            if contacts:
-                contact_id = contacts[0].get("id")
-    
-    result = hubspot_service.create_opportunity(name, contact_id, value)
-    
-    if result.get("success"):
-        response = f"✅ Deal created: {name}"
-        if value > 0:
-            response += f"\n💰 Value: ${value:,.2f}"
+    try:
+        name = data.get("name", "")
+        value = data.get("value", 0)
+        contact = data.get("contact", "")
+        
+        if not name:
+            return "❌ Opportunity name is required"
+        
+        contact_id = ""
         if contact:
-            response += f"\n👤 Contact: {contact}"
-        return response
-    else:
-        return f"❌ Failed to create deal: {result.get('error')}"
+            search_result = hubspot_service.search_contact(contact)
+            if search_result.get("success"):
+                contacts = search_result.get("contacts", [])
+                if contacts:
+                    contact_id = contacts[0].get("id")
+        
+        result = hubspot_service.create_opportunity(name, contact_id, value)
+        
+        if result.get("success"):
+            response = f"✅ Deal created: {name}"
+            if value > 0:
+                response += f"\n💰 Value: ${value:,.2f}"
+            if contact:
+                response += f"\n👤 Contact: {contact}"
+            return response
+        else:
+            return f"❌ Failed to create deal: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error creating opportunity: {str(e)}"
 
 def handle_show_pipeline_summary(data):
     """Handle showing pipeline summary - FULLY FIXED VERSION"""
-    result = hubspot_service.get_pipeline_summary()
-    
-    if result.get("success"):
-        total_value = result.get("total_value", 0)
-        total_count = result.get("total_count", 0)
+    try:
+        result = hubspot_service.get_pipeline_summary()
         
-        response = f"📊 Sales Pipeline Summary:\n\n"
-        response += f"💰 Total Value: ${total_value:,.2f}\n"
-        response += f"📈 Total Deals: {total_count}\n"
-        
-        if total_count > 0:
-            avg_value = total_value / total_count
-            response += f"📊 Average Deal Size: ${avg_value:,.2f}"
-        
-        return response
-    else:
-        return f"❌ Failed to get pipeline summary: {result.get('error')}"
+        if result.get("success"):
+            total_value = result.get("total_value", 0)
+            total_count = result.get("total_count", 0)
+            
+            response = f"📊 Sales Pipeline Summary:\n\n"
+            response += f"💰 Total Value: ${total_value:,.2f}\n"
+            response += f"📈 Total Deals: {total_count}\n"
+            
+            if total_count > 0:
+                avg_value = total_value / total_count
+                response += f"📊 Average Deal Size: ${avg_value:,.2f}"
+            
+            return response
+        else:
+            return f"❌ Failed to get pipeline summary: {result.get('error')}"
+    except Exception as e:
+        return f"❌ Error getting pipeline: {str(e)}"
 
 def handle_show_contact_deals(data):
     """Handle showing deals for a specific contact"""
-    contact_name = data.get("contact_name", "")
-    
-    if not contact_name:
-        return "❌ Contact name is required"
-    
-    result = hubspot_service.show_contact_deals(contact_name)
-    
-    if result.get("success"):
-        deals = result.get("deals", [])
-        if deals:
-            response = f"📊 Deals for {contact_name}:\n\n"
-            for i, deal in enumerate(deals[:5], 1):
-                props = deal.get("properties", {})
-                response += f"{i}. {props.get('dealname', 'Unknown Deal')}\n"
-                if props.get("amount"):
-                    response += f"   💰 ${float(props.get('amount', 0)):,.2f}\n"
-                if props.get("dealstage"):
-                    response += f"   📈 Stage: {props.get('dealstage')}\n"
-                response += "\n"
-            return response.strip()
+    try:
+        contact_name = data.get("contact_name", "")
+        
+        if not contact_name:
+            return "❌ Contact name is required"
+        
+        result = hubspot_service.show_contact_deals(contact_name)
+        
+        if result.get("success"):
+            deals = result.get("deals", [])
+            if deals:
+                response = f"📊 Deals for {contact_name}:\n\n"
+                for i, deal in enumerate(deals[:5], 1):
+                    props = deal.get("properties", {})
+                    response += f"{i}. {props.get('dealname', 'Unknown Deal')}\n"
+                    if props.get("amount"):
+                        response += f"   💰 ${float(props.get('amount', 0)):,.2f}\n"
+                    if props.get("dealstage"):
+                        response += f"   📈 Stage: {props.get('dealstage')}\n"
+                    response += "\n"
+                return response.strip()
+            else:
+                return f"📊 No deals found for {contact_name}"
         else:
-            return f"📊 No deals found for {contact_name}"
-    else:
-        return f"❌ {result.get('error', 'Failed to get deals')}"
+            return f"❌ {result.get('error', 'Failed to get deals')}"
+    except Exception as e:
+        return f"❌ Error getting deals: {str(e)}"
 
 # ==================== ACTION DISPATCHER ====================
 
 def dispatch_action(parsed):
     """Enhanced action dispatcher with all fixes"""
-    action = parsed.get("action")
-    print(f"🔧 Dispatching action: '{action}'")
-    
-    # Handle special/unsupported commands
-    if action == "unsupported_feature":
-        return parsed.get("message", "This feature is not currently supported")
-    
-    # RCS-specific actions
-    elif action == "send_rcs_message":
-        return handle_send_rcs_message(parsed)
-    elif action == "send_interactive_menu":
-        return handle_send_interactive_menu(parsed)
-    elif action == "send_crm_notification":
-        return handle_send_crm_notification(parsed)
-    
-    # Communication actions
-    elif action == "send_message":
-        return handle_send_message(parsed)
-    elif action == "send_message_to_contact":
-        return handle_send_message_to_contact(parsed)
-    elif action == "send_email":
-        return handle_send_email(parsed)
-    elif action == "send_email_to_contact":
-        return handle_send_email_to_contact(parsed)
-    
-    # CRM Contact actions
-    elif action == "create_contact":
-        return handle_create_contact(parsed)
-    elif action == "update_contact_phone":
-        return handle_update_contact_phone(parsed)
-    elif action == "update_contact_email":
-        return handle_update_contact_email(parsed)
-    elif action == "update_contact_company":
-        return handle_update_contact_company(parsed)
-    elif action == "add_contact_note":
-        return handle_add_contact_note(parsed)
-    elif action == "search_contact":
-        return handle_search_contact(parsed)
-    
-    # CRM Task actions
-    elif action == "create_task":
-        return handle_create_task(parsed)
-    
-    # CRM Calendar actions
-    elif action == "schedule_meeting":
-        return handle_schedule_meeting(parsed)
-    elif action == "show_calendar":
-        return handle_show_calendar(parsed)
-    
-    # CRM Pipeline actions
-    elif action == "create_opportunity":
-        return handle_create_opportunity(parsed)
-    elif action == "show_pipeline_summary":
-        return handle_show_pipeline_summary(parsed)
-    elif action == "show_contact_deals":
-        return handle_show_contact_deals(parsed)
-    
-    else:
-        print(f"❌ Unknown action received: '{action}'")
-        return f"Unknown action: {action}. Supported: SMS, RCS, Email, CRM Contact/Task/Calendar/Pipeline operations"
+    try:
+        action = parsed.get("action")
+        print(f"🔧 Dispatching action: '{action}'")
+        
+        # Handle special/unsupported commands
+        if action == "unsupported_feature":
+            return parsed.get("message", "This feature is not currently supported")
+        
+        # RCS-specific actions
+        elif action == "send_rcs_message":
+            return handle_send_rcs_message(parsed)
+        elif action == "send_interactive_menu":
+            return handle_send_interactive_menu(parsed)
+        elif action == "send_crm_notification":
+            return handle_send_crm_notification(parsed)
+        
+        # Communication actions
+        elif action == "send_message":
+            return handle_send_message(parsed)
+        elif action == "send_message_to_contact":
+            return handle_send_message_to_contact(parsed)
+        elif action == "send_email":
+            return handle_send_email(parsed)
+        elif action == "send_email_to_contact":
+            return handle_send_email_to_contact(parsed)
+        
+        # CRM Contact actions
+        elif action == "create_contact":
+            return handle_create_contact(parsed)
+        elif action == "update_contact_phone":
+            return handle_update_contact_phone(parsed)
+        elif action == "update_contact_email":
+            return handle_update_contact_email(parsed)
+        elif action == "update_contact_company":
+            return handle_update_contact_company(parsed)
+        elif action == "add_contact_note":
+            return handle_add_contact_note(parsed)
+        elif action == "search_contact":
+            return handle_search_contact(parsed)
+        
+        # CRM Task actions
+        elif action == "create_task":
+            return handle_create_task(parsed)
+        
+        # CRM Calendar actions
+        elif action == "schedule_meeting":
+            return handle_schedule_meeting(parsed)
+        elif action == "show_calendar":
+            return handle_show_calendar(parsed)
+        
+        # CRM Pipeline actions
+        elif action == "create_opportunity":
+            return handle_create_opportunity(parsed)
+        elif action == "show_pipeline_summary":
+            return handle_show_pipeline_summary(parsed)
+        elif action == "show_contact_deals":
+            return handle_show_contact_deals(parsed)
+        
+        else:
+            print(f"❌ Unknown action received: '{action}'")
+            return f"Unknown action: {action}. Supported: SMS, RCS, Email, CRM Contact/Task/Calendar/Pipeline operations"
+    except Exception as e:
+        return f"❌ Error in dispatch: {str(e)}"
 
 # ==================== INITIALIZE SERVICES ====================
 
@@ -3021,6 +3022,9 @@ def favicon():
 def execute():
     try:
         data = request.json
+        if not data:
+            return jsonify({"error": "Invalid request data"}), 400
+            
         prompt = data.get("text", "")
         
         wake_result = wake_word_processor.process_wake_word_command(prompt)

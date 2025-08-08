@@ -2998,6 +2998,35 @@ def get_html_template():
 </html>'''
 
 # ==================== ROUTES ====================
+@app.route("/send-rcs", methods=["POST"])
+def send_rcs():
+    try:
+        data = request.json
+        recipient = data.get("to")
+        message = data.get("message", "")
+        image_url = data.get("image_url", "")
+        quick_replies = data.get("quick_replies", [])
+
+        if not recipient or not message:
+            return jsonify({"error": "Missing 'to' or 'message' field"}), 400
+
+        # Format phone
+        formatted_phone = format_phone_number(recipient)
+        if not formatted_phone:
+            return jsonify({"error": "Invalid phone number"}), 400
+
+        # Send RCS using enhanced Twilio client
+        result = enhanced_twilio_client.send_smart_message(
+            formatted_phone,
+            message,
+            media_url=image_url,
+            quick_replies=quick_replies
+        )
+
+        return jsonify(result), 200 if result.get("success") else 500
+
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 @app.route("/")
 def root():

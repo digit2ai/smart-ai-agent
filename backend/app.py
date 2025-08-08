@@ -626,14 +626,13 @@ class EnhancedTwilioClient:
             return False
     
 def send_rcs_message(
-    self,
-    to: str,
-    message: str,
-    media_url: Optional[str] = None,
-    quick_replies: Optional[List[str]] = ["✅ Confirm", "🔄 Reschedule", "📞 Call Us"],
-    card_data: Optional[Dict] = None
-) -> Dict[str, Any]:
-
+        self,
+        to: str,
+        message: str,
+        media_url: Optional[str] = None,
+        quick_replies: Optional[List[str]] = ["✅ Confirm", "🔄 Reschedule", "📞 Call Us"],
+        card_data: Optional[Dict] = None
+    ) -> Dict[str, Any]:
         """Send RCS message with rich features"""
         if not self.client or not self.messaging_service_sid:
             return {"error": "RCS not configured - need TWILIO_MESSAGING_SERVICE_SID"}

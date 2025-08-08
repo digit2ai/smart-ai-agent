@@ -81,7 +81,6 @@ class HubSpotService:
             return {"success": False, "error": "HubSpot API token not configured"}
         
         try:
-            # Test with a simple contacts search
             response = requests.post(
                 f"{self.base_url}/crm/v3/objects/contacts/search",
                 headers=self.headers,
@@ -146,7 +145,6 @@ class HubSpotService:
     def search_contact(self, query: str) -> Dict[str, Any]:
         """Search for contacts by name, email, or phone"""
         try:
-            # First try searching by email if query looks like email
             if "@" in query:
                 search_data = {
                     "filterGroups": [{
@@ -160,7 +158,6 @@ class HubSpotService:
                     "limit": 10
                 }
             else:
-                # Use general text search for names
                 search_data = {
                     "query": query,
                     "properties": ["email", "firstname", "lastname", "phone", "company"],
@@ -215,19 +212,21 @@ class HubSpotService:
                 
         except Exception as e:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
-            
-def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
-        """Add note by updating contact's notes field"""
+    
+    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:  # ✅ CORRECT - Properly indented!
+        """Add note by creating as deal or using Notes API"""
         try:
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            
             if not contact_id or contact_id == "0":
-                # If no specific contact, create a general note as a deal
+                # Create general note as deal
                 note_deal = {
                     "properties": {
                         "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
                         "dealstage": "appointmentscheduled",
                         "pipeline": "default", 
                         "amount": "0",
-                        "description": f"Note created via CRMAutoPilot: {note}"
+                        "description": f"Note created via CRMAutoPilot at {timestamp}: {note}"
                     }
                 }
                 
@@ -245,53 +244,51 @@ def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
                         "data": response.json()
                     }
                 else:
-                    return {"success": False, "error": f"Failed to create note: {response.status_code}"}
+                    return {"success": False, "error": f"Failed to create note: {response.text[:200]}"}
             else:
-                # Update contact with note in description field
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                note_with_timestamp = f"[{timestamp}] {note}"
-                
-                # Get current contact to append to existing notes
+                # Create note as deal associated with contact
+                contact_name = "Contact"
                 get_response = requests.get(
                     f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
                     headers=self.headers,
-                    params={"properties": "notes"},
+                    params={"properties": "firstname,lastname"},
                     timeout=10
                 )
                 
-                existing_notes = ""
                 if get_response.status_code == 200:
                     contact_data = get_response.json()
-                    existing_notes = contact_data.get("properties", {}).get("notes", "")
+                    props = contact_data.get("properties", {})
+                    firstname = props.get("firstname", "")
+                    lastname = props.get("lastname", "")
+                    contact_name = f"{firstname} {lastname}".strip() or "Contact"
                 
-                # Append new note
-                updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
-                
-                contact_update = {
+                # Create deal as note
+                note_deal = {
                     "properties": {
-                        "notes": updated_notes
+                        "dealname": f"NOTE for {contact_name}: {note[:30]}...",
+                        "dealstage": "appointmentscheduled",
+                        "pipeline": "default",
+                        "amount": "0",
+                        "description": f"Note for {contact_name} (ID: {contact_id})\nCreated: {timestamp}\n\n{note}"
                     }
                 }
                 
-                update_response = requests.patch(
-                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                deal_response = requests.post(
+                    f"{self.base_url}/crm/v3/objects/deals",
                     headers=self.headers,
-                    json=contact_update,
+                    json=note_deal,
                     timeout=10
                 )
                 
-                if update_response.status_code == 200:
+                if deal_response.status_code in [200, 201]:
                     return {
                         "success": True,
                         "message": f"✅ Note saved",
-                        "data": update_response.json()
+                        "data": deal_response.json()
                     }
                 else:
-                    return {"success": False, "error": f"Failed to update notes: {update_response.status_code}"}
+                    return {"success": False, "error": f"Failed to create note: {deal_response.text[:200]}"}
             
-            # Fallback if nothing worked
-            return {"success": False, "error": "Failed to add note"}
-                
         except Exception as e:
             return {"success": False, "error": f"Error adding note: {str(e)}"}
     

@@ -215,7 +215,8 @@ class HubSpotService:
                 
         except Exception as e:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
-    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+            
+def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
         """Add note by updating contact's notes field"""
         try:
             if not contact_id or contact_id == "0":

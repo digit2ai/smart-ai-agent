@@ -1223,7 +1223,7 @@ def fix_email_addresses(text: str) -> str:
     return fixed_text
 
 def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract email command from text - FULLY FIXED VERSION"""
+    """Extract email command from text - FIXED to handle multiple recipients"""
     original_text = text
     fixed_text = fix_email_addresses(text)
     
@@ -1238,6 +1238,7 @@ def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
         r'email (.+?) subject (.+?) saying (.+?)(?:\s+then\s+.+)?$',
         r'email (.+?) saying (.+?)(?:\s+then\s+.+)?$',
         r'send (?:an )?email to (.+?) saying (.+?)(?:\s+then\s+.+)?$',
+        r'email (.+?) (?:about|regarding) (.+?)(?:\s+then\s+.+)?$',  # Added pattern for "email X about Y"
     ]
     
     text_lower = fixed_text.lower().strip()
@@ -1269,7 +1270,23 @@ def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
             # Clean up recipient to remove extra words
             recipient = recipient.replace("to ", "").strip()
             
-            # Check if recipient is a name that needs lookup
+            # Check for multiple recipients separated by "and" or ","
+            if " and " in recipient or "," in recipient:
+                # Split recipients by "and" or ","
+                if " and " in recipient:
+                    recipients = [r.strip() for r in recipient.split(" and ")]
+                else:
+                    recipients = [r.strip() for r in recipient.split(",")]
+                
+                # All recipients are names that need lookup
+                return {
+                    "action": "send_email_to_multiple_contacts",
+                    "contact_names": recipients,
+                    "subject": subject,
+                    "message": message
+                }
+            
+            # Single recipient
             if not is_email_address(recipient):
                 # Check for known test contacts with fallback emails
                 known_contacts = {
@@ -1289,7 +1306,7 @@ def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
                     "contact_name": recipient,
                     "subject": subject,
                     "message": message,
-                    "fallback_email": fallback_email  # Add fallback
+                    "fallback_email": fallback_email
                 }
             
             message = message.replace(" period", ".").replace(" comma", ",")

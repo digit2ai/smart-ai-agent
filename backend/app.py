@@ -1305,7 +1305,29 @@ def extract_email_command(text: str) -> Optional[Dict[str, Any]]:
     return None
 
 def extract_sms_command(text: str) -> Optional[Dict[str, Any]]:
-    """Extract SMS command from text - FULLY FIXED VERSION"""
+    """Extract SMS command from text - FIXED to handle email addresses in messages"""
+    text_lower = text.lower().strip()
+    
+    # Special handling for "text [phone] saying [message]" pattern
+    # This needs to come first to avoid confusion with email commands
+    if text_lower.startswith("text "):
+        # Match: text [phone number] saying [anything including email addresses]
+        pattern = r'^text\s+([+]?\d{10,12})\s+(?:saying|about)\s+(.+)$'
+        match = re.search(pattern, text_lower, re.IGNORECASE)
+        if match:
+            recipient = match.group(1).strip()
+            message = match.group(2).strip()
+            
+            # Clean up the message
+            message = message.replace(" period", ".").replace(" comma", ",")
+            
+            return {
+                "action": "send_message",
+                "recipient": recipient,
+                "message": message
+            }
+    
+    # Standard patterns for other SMS commands
     patterns = [
         r'send (?:a )?(?:text|message|sms) to (.+?) (?:saying|about) (.+)',
         r'text (.+?) (?:saying|about) (.+)',
@@ -1314,8 +1336,6 @@ def extract_sms_command(text: str) -> Optional[Dict[str, Any]]:
         r'send (.+?) the message (.+)',
         r'tell (.+?) that (.+)',
     ]
-    
-    text_lower = text.lower().strip()
     
     for pattern in patterns:
         match = re.search(pattern, text_lower, re.IGNORECASE)

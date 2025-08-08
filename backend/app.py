@@ -216,79 +216,86 @@ class HubSpotService:
         except Exception as e:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
     
-    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
-        """Add note by updating contact's notes field"""
-        try:
-            if not contact_id or contact_id == "0":
-                # If no specific contact, create a general note as a deal
-                note_deal = {
-                    "properties": {
-                        "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
-                        "dealstage": "appointmentscheduled",
-                        "pipeline": "default", 
-                        "amount": "0",
-                        "description": f"Note created via CRMAutoPilot: {note}"
-                    }
+def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+    """Add note by updating contact's notes field"""
+    try:
+        if not contact_id or contact_id == "0":
+            # If no specific contact, create a general note as a deal
+            note_deal = {
+                "properties": {
+                    "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
+                    "dealstage": "appointmentscheduled",
+                    "pipeline": "default", 
+                    "amount": "0",
+                    "description": f"Note created via CRMAutoPilot: {note}"
                 }
-                
-                response = requests.post(
-                    f"{self.base_url}/crm/v3/objects/deals",
-                    headers=self.headers,
-                    json=note_deal,
-                    timeout=10
-                )
-                
-                if response.status_code in [200, 201]:
-                    return {
-                        "success": True,
-                        "message": f"✅ Note saved",
-                        "data": response.json()
-                    }
-            else:
-                # Update contact with note in description field
-                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-                note_with_timestamp = f"[{timestamp}] {note}"
-                
-                # Get current contact to append to existing notes
-                get_response = requests.get(
-                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
-                    headers=self.headers,
-                    params={"properties": "notes"},
-                    timeout=10
-                )
-                
-                existing_notes = ""
-                if get_response.status_code == 200:
-                    contact_data = get_response.json()
-                    existing_notes = contact_data.get("properties", {}).get("notes", "")
-                
-                # Append new note
-                updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
-                
-                contact_update = {
-                    "properties": {
-                        "notes": updated_notes
-                    }
-                }
-                
-                update_response = requests.patch(
-                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
-                    headers=self.headers,
-                    json=contact_update,
-                    timeout=10
-                )
-                
-                if update_response.status_code == 200:
-                    return {
-                        "success": True,
-                        "message": f"✅ Note saved",
-                        "data": update_response.json()
-                    }
+            }
             
-            return {"success": False, "error": "Failed to add note"}
-                
-        except Exception as e:
-            return {"success": False, "error": f"Error adding note: {str(e)}"}
+            response = requests.post(
+                f"{self.base_url}/crm/v3/objects/deals",
+                headers=self.headers,
+                json=note_deal,
+                timeout=10
+            )
+            
+            if response.status_code in [200, 201]:
+                return {
+                    "success": True,
+                    "message": f"✅ Note saved",
+                    "data": response.json()
+                }
+            else:
+                # Return the actual error from HubSpot
+                return {"success": False, "error": f"Failed to create note deal: {response.text}"}
+        else:
+            # Update contact with note in description field
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+            note_with_timestamp = f"[{timestamp}] {note}"
+            
+            # Get current contact to append to existing notes
+            get_response = requests.get(
+                f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                headers=self.headers,
+                params={"properties": "notes"},
+                timeout=10
+            )
+            
+            existing_notes = ""
+            if get_response.status_code == 200:
+                contact_data = get_response.json()
+                existing_notes = contact_data.get("properties", {}).get("notes", "")
+            else:
+                # If we can't get the contact, return error
+                return {"success": False, "error": f"Contact not found with ID: {contact_id}"}
+            
+            # Append new note
+            updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
+            
+            contact_update = {
+                "properties": {
+                    "notes": updated_notes
+                }
+            }
+            
+            update_response = requests.patch(
+                f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                headers=self.headers,
+                json=contact_update,
+                timeout=10
+            )
+            
+            if update_response.status_code == 200:
+                return {
+                    "success": True,
+                    "message": f"✅ Note saved",
+                    "data": update_response.json()
+                }
+            else:
+                # Return the actual error from HubSpot
+                return {"success": False, "error": f"Failed to update contact notes: {update_response.text}"}
+        
+    except Exception as e:
+        return {"success": False, "error": f"Error adding note: {str(e)}"}
     
     def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
         """Create task as a deal record in HubSpot"""
@@ -2189,63 +2196,54 @@ def handle_add_contact_note(data):
     except Exception as e:
         return f"❌ Error adding note: {str(e)}"
 
-def handle_search_contact(data):
-    """Handle searching for contact - Enhanced version"""
+def handle_add_contact_note(data):
+    """Handle adding note to contact - FULLY FIXED VERSION"""
     try:
-        query = data.get("query", "")
+        name = data.get("name", "")
+        note = data.get("note", "")
         
-        if not query:
-            return "❌ Search query is required"
+        if not note:
+            return "❌ Note text is required"
         
-        result = hubspot_service.search_contact(query)
+        contact_id = ""
+        contact_found = False
         
-        if result.get("success"):
-            contacts = result.get("contacts", [])
-            if contacts:
-                response = f"✅ Found {len(contacts)} contact(s):\n\n"
-                for i, contact in enumerate(contacts[:3], 1):
-                    props = contact.get('properties', {})
-                    response += f"{i}. {props.get('firstname', '')} {props.get('lastname', '')}\n"
-                    if props.get("email"):
-                        response += f"   📧 {props.get('email')}\n"
-                    if props.get("phone"):
-                        response += f"   📱 {props.get('phone')}\n"
-                    if props.get("company"):
-                        response += f"   🏢 {props.get('company')}\n"
-                    response += "\n"
-                return response.strip()
+        if name:
+            search_result = hubspot_service.search_contact(name)
+            if search_result.get("success"):
+                contacts = search_result.get("contacts", [])
+                if contacts:
+                    contact_id = contacts[0].get("id")
+                    contact_found = True
+        
+        # If contact not found but name provided, create the contact first
+        if name and not contact_found:
+            # Try to create the contact
+            create_result = hubspot_service.create_contact(name)
+            if create_result.get("success"):
+                contact_id = create_result.get("contact_id", "")
+                contact_found = True
+                print(f"✅ Created new contact '{name}' for note")
+        
+        # Now add the note
+        note_result = hubspot_service.add_contact_note(contact_id, note)
+        
+        # ALWAYS return success message if note was saved
+        if note_result.get("success"):
+            if name and contact_found:
+                response = f"✅ Note saved"
+                response += f"\n📍 Added to {name}'s contact record"
             else:
-                return f"❌ No contacts found for: {query}"
-        else:
-            # Return graceful message for non-existent contacts
-            return f"ℹ️ No contact found with name '{query}'. You can create a new contact using: 'create contact {query}'"
-    except Exception as e:
-        return f"❌ Error searching contacts: {str(e)}"
-
-def handle_create_task(data):
-    """Handle creating new task"""
-    try:
-        title = data.get("title", "")
-        contact = data.get("contact", "")
-        due_date = data.get("due_date", "")
-        
-        if not title:
-            return "❌ Task title is required"
-        
-        result = hubspot_service.create_task(title, "", "", due_date)
-        
-        if result.get("success"):
-            response = f"✅ Task created: {title}"
-            if contact:
-                response += f"\n👤 For: {contact}"
-            if due_date:
-                response += f"\n📅 Due: {due_date}"
-            response += f"\n📍 Find it in HubSpot → Deals → Look for 'TASK: {title}'"
+                response = f"✅ Note saved"
+                if name:
+                    response += f"\n📍 Note saved as general note (contact '{name}' not found)"
+                else:
+                    response += f"\n📍 Saved as general note in HubSpot"
             return response
         else:
-            return f"❌ Failed to create task: {result.get('error')}"
+            return f"❌ Failed to add note: {note_result.get('error')}"
     except Exception as e:
-        return f"❌ Error creating task: {str(e)}"
+        return f"❌ Error adding note: {str(e)}"
 
 def handle_schedule_meeting(data):
     """Handle scheduling meetings/appointments"""

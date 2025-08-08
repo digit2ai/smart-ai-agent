@@ -215,128 +215,84 @@ class HubSpotService:
                 
         except Exception as e:
             return {"success": False, "error": f"Error updating contact: {str(e)}"}
-    
-def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
-    """Add note by updating contact's notes field"""
-    try:
-        if not contact_id or contact_id == "0":
-            # If no specific contact, create a general note as a deal
-            note_deal = {
-                "properties": {
-                    "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
-                    "dealstage": "appointmentscheduled",
-                    "pipeline": "default", 
-                    "amount": "0",
-                    "description": f"Note created via CRMAutoPilot: {note}"
-                }
-            }
-            
-            response = requests.post(
-                f"{self.base_url}/crm/v3/objects/deals",
-                headers=self.headers,
-                json=note_deal,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"✅ Note saved",
-                    "data": response.json()
-                }
-            else:
-                # Return the actual error from HubSpot
-                return {"success": False, "error": f"Failed to create note deal: {response.text}"}
-        else:
-            # Update contact with note in description field
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            note_with_timestamp = f"[{timestamp}] {note}"
-            
-            # Get current contact to append to existing notes
-            get_response = requests.get(
-                f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
-                headers=self.headers,
-                params={"properties": "notes"},
-                timeout=10
-            )
-            
-            existing_notes = ""
-            if get_response.status_code == 200:
-                contact_data = get_response.json()
-                existing_notes = contact_data.get("properties", {}).get("notes", "")
-            else:
-                # If we can't get the contact, return error
-                return {"success": False, "error": f"Contact not found with ID: {contact_id}"}
-            
-            # Append new note
-            updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
-            
-            contact_update = {
-                "properties": {
-                    "notes": updated_notes
-                }
-            }
-            
-            update_response = requests.patch(
-                f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
-                headers=self.headers,
-                json=contact_update,
-                timeout=10
-            )
-            
-            if update_response.status_code == 200:
-                return {
-                    "success": True,
-                    "message": f"✅ Note saved",
-                    "data": update_response.json()
-                }
-            else:
-                # Return the actual error from HubSpot
-                return {"success": False, "error": f"Failed to update contact notes: {update_response.text}"}
-        
-    except Exception as e:
-        return {"success": False, "error": f"Error adding note: {str(e)}"}
-    
-    def create_task(self, title: str, description: str = "", contact_id: str = "", due_date: str = "") -> Dict[str, Any]:
-        """Create task as a deal record in HubSpot"""
+    def add_contact_note(self, contact_id: str, note: str) -> Dict[str, Any]:
+        """Add note by updating contact's notes field"""
         try:
-            # Create task as a deal with specific naming convention
-            task_name = f"TASK: {title}"
-            
-            deal_properties = {
-                "dealname": task_name,
-                "dealstage": "appointmentscheduled",  # Use existing stage
-                "pipeline": "default",
-                "amount": "0"  # Tasks have no monetary value
-            }
-            
-            if description:
-                deal_properties["description"] = description
-            
-            if due_date:
-                parsed_date = self._parse_date(due_date)
-                deal_properties["closedate"] = parsed_date
-            
-            deal_data = {"properties": deal_properties}
-            
-            response = requests.post(
-                f"{self.base_url}/crm/v3/objects/deals",
-                headers=self.headers,
-                json=deal_data,
-                timeout=10
-            )
-            
-            if response.status_code in [200, 201]:
-                return {
-                    "success": True,
-                    "message": f"Task created: {title}",
-                    "data": response.json()
+            if not contact_id or contact_id == "0":
+                # If no specific contact, create a general note as a deal
+                note_deal = {
+                    "properties": {
+                        "dealname": f"NOTE: {note[:50]}..." if len(note) > 50 else f"NOTE: {note}",
+                        "dealstage": "appointmentscheduled",
+                        "pipeline": "default", 
+                        "amount": "0",
+                        "description": f"Note created via CRMAutoPilot: {note}"
+                    }
                 }
+                
+                response = requests.post(
+                    f"{self.base_url}/crm/v3/objects/deals",
+                    headers=self.headers,
+                    json=note_deal,
+                    timeout=10
+                )
+                
+                if response.status_code in [200, 201]:
+                    return {
+                        "success": True,
+                        "message": f"✅ Note saved",
+                        "data": response.json()
+                    }
+                else:
+                    return {"success": False, "error": f"Failed to create note: {response.status_code}"}
             else:
-                return {"success": False, "error": f"Failed to create task: {response.text}"}
+                # Update contact with note in description field
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                note_with_timestamp = f"[{timestamp}] {note}"
+                
+                # Get current contact to append to existing notes
+                get_response = requests.get(
+                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                    headers=self.headers,
+                    params={"properties": "notes"},
+                    timeout=10
+                )
+                
+                existing_notes = ""
+                if get_response.status_code == 200:
+                    contact_data = get_response.json()
+                    existing_notes = contact_data.get("properties", {}).get("notes", "")
+                
+                # Append new note
+                updated_notes = f"{existing_notes}\n{note_with_timestamp}" if existing_notes else note_with_timestamp
+                
+                contact_update = {
+                    "properties": {
+                        "notes": updated_notes
+                    }
+                }
+                
+                update_response = requests.patch(
+                    f"{self.base_url}/crm/v3/objects/contacts/{contact_id}",
+                    headers=self.headers,
+                    json=contact_update,
+                    timeout=10
+                )
+                
+                if update_response.status_code == 200:
+                    return {
+                        "success": True,
+                        "message": f"✅ Note saved",
+                        "data": update_response.json()
+                    }
+                else:
+                    return {"success": False, "error": f"Failed to update notes: {update_response.status_code}"}
+            
+            # Fallback if nothing worked
+            return {"success": False, "error": "Failed to add note"}
                 
         except Exception as e:
-            return {"success": False, "error": f"Error creating task: {str(e)}"}
+            return {"success": False, "error": f"Error adding note: {str(e)}"}
     
     def create_appointment(self, title: str, contact_id: str = "", start_time: str = "", duration: int = 30) -> Dict[str, Any]:
         """Create meeting as a deal record with meeting details"""

@@ -1,5 +1,5 @@
 # Enhanced Flask Wake Word App - SMS, Email, CRM & RCS with HubSpot Integration
-# Complete CRMAutoPilot with Twilio RCS Support - FIXED VERSION
+# Complete CRM Co-Pilot with Twilio RCS Support - FIXED VERSION
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import requests
@@ -2701,18 +2701,18 @@ def get_html_template():
 <body>
     <div class="container">
         <div class="header">
-            <h1>CRMAutoPilot</h1>
+            <h1>Business Automation</h1>
             {f'<div class="rcs-badge">🚀 RCS Enabled</div>' if rcs_enabled else ''}
             <img src="https://assets.cdn.filesafe.space/3lSeAHXNU9t09Hhp9oai/media/688c054fea6d0f50b10fc3d7.webp" alt="CRMAutoPilot AI Assistant Logo" />
             <p>Voice-powered business automation with {f'RCS messaging & ' if rcs_enabled else ''}HubSpot CRM!</p>
         </div>
         
         <div class="capabilities">
-            <h3>🚀 CRMAutoPilot Capabilities</h3>
+            <h3>🚀 CRM Voice Capabilities</h3>
             {f'''<div class="capability-section rcs">
                 <h4>📱 RCS Rich Messaging</h4>
                 <ul
-<li>"send rich message to Manuel saying meeting confirmed"</li>
+<li>"send rich message to Manuel Stagg saying meeting confirmed"</li>
                     <li>"send menu to client for services"</li>
                     <li>"send meeting reminder to John about tomorrow's call"</li>
                 </ul>
